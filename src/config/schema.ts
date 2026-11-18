@@ -231,6 +231,91 @@ export const SuppressionSchema = z
   .strict()
   .refine((s) => s.id ?? s.kind ?? s.rule ?? s.resource ?? s.domain, 'a suppression needs at least one of id, kind, rule, resource or domain');
 
+/**
+ * Alert settings. Values may reference environment variables as ${NAME};
+ * they are resolved only by the alert publisher, at send time. Never put
+ * credentials directly in the configuration file.
+ */
+const envString = z.string().min(1).max(4_096);
+const alertSeverity = z.enum(SEVERITIES);
+
+export const SlackAlertSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    webhookUrl: envString.default('${SCRIPTDRIFT_SLACK_WEBHOOK}'),
+    minSeverity: alertSeverity.optional(),
+  })
+  .strict();
+
+export const WebhookAlertSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    url: envString.default('${SCRIPTDRIFT_WEBHOOK_URL}'),
+    /** Optional HMAC-SHA256 signing secret (X-ScriptDrift-Signature header). */
+    secret: envString.optional(),
+    minSeverity: alertSeverity.optional(),
+    /** Allow plain-http URLs (e.g. an internal receiver). Off by default. */
+    allowInsecureHttp: z.boolean().default(false),
+  })
+  .strict();
+
+export const GithubAlertSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    createIssues: z.boolean().default(true),
+    /** owner/repo. Defaults to ${GITHUB_REPOSITORY} (set automatically in GitHub Actions). */
+    repository: envString.default('${GITHUB_REPOSITORY}'),
+    token: envString.default('${GITHUB_TOKEN}'),
+    apiUrl: envString.default('https://api.github.com'),
+    labels: z.array(z.string().min(1).max(50)).max(10).default(['scriptdrift', 'security']),
+    maxIssuesPerRun: z.number().int().min(1).max(100).default(10),
+    minSeverity: alertSeverity.optional(),
+  })
+  .strict();
+
+export const EmailAlertSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    host: envString.default('${SCRIPTDRIFT_SMTP_HOST}'),
+    port: z.union([z.number().int().min(1).max(65535), envString]).default('${SCRIPTDRIFT_SMTP_PORT}'),
+    /** true = implicit TLS (port 465); false = STARTTLS when offered. */
+    secure: z.boolean().default(false),
+    /** Require STARTTLS (refuse to send credentials over a plain connection). */
+    requireTLS: z.boolean().default(true),
+    username: envString.optional(),
+    password: envString.optional(),
+    from: envString.default('${SCRIPTDRIFT_SMTP_FROM}'),
+    to: z.union([z.array(envString).min(1), envString]).default('${SCRIPTDRIFT_SMTP_TO}'),
+    minSeverity: alertSeverity.optional(),
+  })
+  .strict();
+
+export const AlertsSchema = z
+  .object({
+    /** Only findings at or above this severity are sent (per-channel minSeverity overrides). */
+    minSeverity: alertSeverity.default('medium'),
+    /** Re-send an unchanged finding after this many hours (0 = only alert once per finding). */
+    repeatAfterHours: z.number().min(0).max(24 * 365).default(0),
+    /** Maximum findings listed in one alert message. */
+    maxFindingsPerAlert: z.number().int().min(1).max(100).default(20),
+    /** Optional link to the published report (e.g. a CI run URL). May use ${ENV}. */
+    reportUrl: envString.optional(),
+    timeoutMs: z.number().int().min(1_000).max(120_000).default(15_000),
+    retries: z.number().int().min(0).max(5).default(2),
+    slack: SlackAlertSchema.prefault({}),
+    webhook: WebhookAlertSchema.prefault({}),
+    github: GithubAlertSchema.prefault({}),
+    email: EmailAlertSchema.prefault({}),
+  })
+  .strict();
+
+export const ReportingSchema = z
+  .object({
+    /** Report formats written after each scan. */
+    formats: z.array(z.enum(['json', 'sarif', 'html'])).min(1).default(['json', 'sarif', 'html']),
+  })
+  .strict();
+
 export const DefaultsSchema = z
   .object({
     browser: BrowserOptionsSchema.prefault({}),
@@ -254,6 +339,8 @@ export const ConfigSchema = z
     rules: z.record(z.string().regex(/^SD-[A-Z0-9-]+$/, 'rule ids look like SD-EVAL'), RuleConfigSchema).default({}),
     domains: DomainPolicySchema.prefault({}),
     suppressions: z.array(SuppressionSchema).default([]),
+    reporting: ReportingSchema.prefault({}),
+    alerts: AlertsSchema.prefault({}),
     /** Default --fail-on threshold for scan/diff (`none` never fails on findings). */
     failOn: z.enum([...SEVERITIES, 'none']).default('high'),
   })
@@ -283,3 +370,4 @@ export type NetworkSecurityConfig = z.infer<typeof NetworkSecuritySchema>;
 export type RuleConfig = z.infer<typeof RuleConfigSchema>;
 export type DomainPolicy = z.infer<typeof DomainPolicySchema>;
 export type Suppression = z.infer<typeof SuppressionSchema>;
+export type AlertsConfig = z.infer<typeof AlertsSchema>;

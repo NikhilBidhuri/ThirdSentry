@@ -2,17 +2,21 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-let cached: string | undefined;
+interface PackageInfo {
+  readonly version: string;
+  readonly homepage?: string;
+}
 
-/** Resolve the package version from package.json (works from src/ and dist/). */
-export function toolVersion(): string {
+let cached: PackageInfo | undefined;
+
+function packageInfo(): PackageInfo {
   if (cached) return cached;
   let dir = dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 5; i++) {
     try {
-      const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { name?: string; version?: string };
+      const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { name?: string; version?: string; homepage?: string };
       if (pkg.name === 'scriptdrift' && pkg.version) {
-        cached = pkg.version;
+        cached = { version: pkg.version, ...(pkg.homepage ? { homepage: pkg.homepage } : {}) };
         return cached;
       }
     } catch {
@@ -20,6 +24,16 @@ export function toolVersion(): string {
     }
     dir = dirname(dir);
   }
-  cached = '0.0.0';
+  cached = { version: '0.0.0' };
   return cached;
+}
+
+/** Resolve the package version from package.json (works from src/ and dist/). */
+export function toolVersion(): string {
+  return packageInfo().version;
+}
+
+/** Project homepage from package.json, if one is declared. */
+export function projectHomepage(): string | undefined {
+  return packageInfo().homepage;
 }

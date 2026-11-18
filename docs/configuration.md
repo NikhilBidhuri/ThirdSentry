@@ -202,3 +202,13 @@ Static behaviour analysis is described in [rules.md](rules.md).
 ## `suppressions`
 
 A list of documented suppressions. Each entry needs a `reason` and at least one of `id`, `kind`, `rule`, `resource`, `domain`; `site` and `expires` are optional. See [rules.md](rules.md#suppressing-false-positives).
+
+## `reporting`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `formats` | `[json, sarif, html]` | Report formats written after each scan. |
+
+## `alerts`
+
+See [alerts.md](alerts.md) for every option and the environment variables they use. Credentials must be `${ENV_VAR}` references; they are resolved only when alerts are sent.

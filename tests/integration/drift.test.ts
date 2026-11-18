@@ -65,6 +65,9 @@ describe('drift detection end to end', () => {
     expect(rep.sites[0]?.baseline.exists).toBe(false);
     expect(rep.findings).toEqual([]);
     expect(rep.headline).toMatch(/No approved baseline/);
+    for (const f of ['report.json', 'report.sarif', 'report.html']) {
+      expect((await readFile(join(dir, '.scriptdrift', 'reports', f), 'utf8')).length).toBeGreaterThan(100);
+    }
   }, 120_000);
 
   it('refuses to write a baseline without confirmation in non-interactive mode', async () => {
@@ -137,6 +140,17 @@ describe('drift detection end to end', () => {
     const out = JSON.parse(d.stdout) as AnalysisReport;
     expect(out.findings.some((f) => f.id === lib?.id)).toBe(false);
     expect(out.findings.some((f) => f.kind === 'new-outbound-domain')).toBe(true);
+  });
+
+  it('regenerates reports in a chosen format and directory, and previews alerts', async () => {
+    const out = join(dir, 'out');
+    const r = await cli('report', '--format', 'sarif,html', '--output', out, '--fail-on', 'info');
+    expect(r.code).toBe(1);
+    const sarif = JSON.parse(await readFile(join(out, 'report.sarif'), 'utf8')) as { runs: Array<{ results: unknown[] }> };
+    expect(sarif.runs[0]?.results.length).toBeGreaterThan(0);
+    expect(await readFile(join(out, 'report.html'), 'utf8')).toContain('ScriptDrift report');
+    const a = await cli('--json', 'alert', '--dry-run');
+    expect(a.code).toBe(0);
   });
 
   it('rejects unknown finding IDs', async () => {

@@ -76,8 +76,8 @@ export function annotateFindings(findings: Finding[], state: FindingState): void
 export function recordAlerted(state: FindingState, ids: readonly string[], severityOf: (id: string) => Severity | undefined, now: Date = new Date()): void {
   const at = now.toISOString();
   for (const id of ids) {
-    const entry = state.findings[id];
-    if (!entry) continue;
-    state.findings[id] = { ...entry, lastAlertedAt: at, lastAlertedSeverity: severityOf(id) ?? entry.severity };
+    const severity = severityOf(id) ?? 'info';
+    const entry = state.findings[id] ?? { firstSeen: at, lastSeen: at, timesSeen: 1, severity };
+    state.findings[id] = { ...entry, lastAlertedAt: at, lastAlertedSeverity: severity };
   }
 }

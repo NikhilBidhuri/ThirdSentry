@@ -43,11 +43,13 @@ Visit the configured pages in a browser, discover executable resources, hash the
 | Option | Description |
 | --- | --- |
 | `-s, --site <names>` | Only scan these sites (comma separated). |
-| `-o, --output <file>` | Also write the scan result JSON here. |
+| `-o, --output <dir>` | Directory for reports (default `.scriptdrift/reports`). |
+| `-f, --format <formats>` | Report formats: `json`, `sarif`, `html` (comma separated; default `reporting.formats`). |
+| `--no-alerts` | Do not send alerts even if channels are enabled. |
 | `--fail-on <severity>` | Exit with code 1 if any unsuppressed finding is at least this severe: `info`, `low`, `medium`, `high`, `critical` or `none`. Default: `failOn` from the config (`high`). |
 | `--skip-preflight` | Skip DNS pre-flight checks. Every connection is still validated by the egress proxy. |
 
-After scanning, the result is compared with each site's baseline (if one exists) and the analysis report is written to `.scriptdrift/reports/report.json`. Scans never modify baselines.
+After scanning, the result is compared with each site's baseline (if one exists), reports are written (`report.json`, `report.sarif`, `report.html`) and alerts are sent for new findings. The scan result itself is stored in `.scriptdrift/reports/scans/`. Scans never modify baselines.
 
 ## `scriptdrift baseline`
 
@@ -75,3 +77,32 @@ Compare the latest scan (or `--scan <file>`) with the baselines without scanning
 | `--finding <id>` | Show a single finding. |
 | `--context <lines>` | Context lines in code diffs (default 3). |
 | `--fail-on <severity>` | As for `scan`. |
+
+## `scriptdrift report`
+
+Regenerate reports from the latest (or a given) scan without scanning again.
+
+| Option | Description |
+| --- | --- |
+| `--scan <file>` | Scan result to report on. |
+| `-f, --format <formats>` | `json`, `sarif`, `html` (default `reporting.formats`). |
+| `-o, --output <dir>` | Output directory (default `.scriptdrift/reports`). |
+| `--fail-on <severity>` | Exit with code 1 if a finding is at least this severe (default `none`). |
+
+| File | Purpose |
+| --- | --- |
+| `report.json` | Complete machine-readable report (`kind: scriptdrift-report`). |
+| `report.sarif` | SARIF 2.1.0 for GitHub Code Scanning. Results are anchored to the site's entry in `scriptdrift.yml`. |
+| `report.html` | Self-contained, script-free HTML report for people. |
+
+## `scriptdrift alert`
+
+Send alerts for new findings in `report.json`. See [alerts.md](alerts.md).
+
+| Option | Description |
+| --- | --- |
+| `--report <file>` | Report to alert on. |
+| `--channel <names>` | Only these channels: `slack`, `webhook`, `github`, `email`. |
+| `--dry-run` | Show what would be sent. |
+
+Exit code `4` if any channel failed.
