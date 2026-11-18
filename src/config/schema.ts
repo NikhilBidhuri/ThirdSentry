@@ -157,6 +157,24 @@ export const RetentionSchema = z
   })
   .strict();
 
+export const RiskSchema = z
+  .object({
+    /** Minimum score (0-100) for each severity. Scores below `low` are informational. */
+    thresholds: z
+      .object({
+        low: z.number().min(0).max(100).default(15),
+        medium: z.number().min(0).max(100).default(30),
+        high: z.number().min(0).max(100).default(50),
+        critical: z.number().min(0).max(100).default(75),
+      })
+      .strict()
+      .prefault({})
+      .refine((t) => t.low <= t.medium && t.medium <= t.high && t.high <= t.critical, 'thresholds must be ascending: low <= medium <= high <= critical'),
+    /** Override individual signal weights (signal id → weight). */
+    weights: z.record(z.string(), z.number().min(-100).max(100)).default({}),
+  })
+  .strict();
+
 export const DefaultsSchema = z
   .object({
     browser: BrowserOptionsSchema.prefault({}),
@@ -175,6 +193,9 @@ export const ConfigSchema = z
     security: SecuritySchema.prefault({}),
     serviceWorkers: ServiceWorkerSchema.prefault({}),
     retention: RetentionSchema.prefault({}),
+    risk: RiskSchema.prefault({}),
+    /** Default --fail-on threshold for scan/diff (`none` never fails on findings). */
+    failOn: z.enum([...SEVERITIES, 'none']).default('high'),
   })
   .strict()
   .superRefine((cfg, ctx) => {

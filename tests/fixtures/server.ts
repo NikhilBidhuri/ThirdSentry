@@ -92,6 +92,7 @@ export const FIXTURE_HOSTS = [
   'analytics.vendor-b.test',
   'collect.vendor-c.test',
   'frame.vendor-d.test',
+  'exfil.vendor-e.test',
   'internal.test',
 ] as const;
 

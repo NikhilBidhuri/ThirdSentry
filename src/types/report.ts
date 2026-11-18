@@ -1,0 +1,44 @@
+import type { Finding, Severity } from './findings.js';
+import type { Issue, PageStatus, ScanSummary } from './index.js';
+
+export interface SiteComparisonSummary {
+  readonly name: string;
+  readonly url: string;
+  readonly status: PageStatus;
+  readonly baseline: {
+    readonly exists: boolean;
+    readonly path: string;
+    readonly approvedAt?: string;
+    readonly sourceScanId?: string;
+    readonly resources?: number;
+  };
+  readonly unchangedResources: number;
+  readonly newResources: number;
+  readonly modifiedResources: number;
+  readonly removedResources: number;
+  readonly newDomains: readonly string[];
+  readonly pagesNotCompared: readonly string[];
+  readonly findings: number;
+}
+
+/** The analysis report: scan facts + comparison with baselines + findings. */
+export interface AnalysisReport {
+  readonly schemaVersion: 1;
+  readonly kind: 'scriptdrift-report';
+  readonly generatedAt: string;
+  readonly toolVersion: string;
+  readonly scanId: string;
+  readonly scanPath: string;
+  readonly scanStatus: PageStatus;
+  readonly scanStartedAt: string;
+  readonly scanFinishedAt: string;
+  readonly scanSummary: ScanSummary;
+  readonly scanIssues: readonly Issue[];
+  readonly sites: readonly SiteComparisonSummary[];
+  readonly findings: readonly Finding[];
+  readonly findingCounts: Readonly<Record<Severity, number>>;
+  readonly highestSeverity: Severity | 'none';
+  readonly coverageLimitations: readonly string[];
+  /** Plain-language summary for non-specialists. */
+  readonly headline: string;
+}

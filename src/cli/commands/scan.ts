@@ -6,7 +6,10 @@ import { runScan } from '../../monitoring/scan-manager.js';
 import { shortHash } from '../../analysis/hashing.js';
 import type { ScanResult } from '../../types/index.js';
 import { ExitCode } from '../../utils/exit-codes.js';
+import { analyzeScan, exceedsThreshold, saveReportJson } from '../../monitoring/analysis-runner.js';
 import { globalOptions, logLevelFor } from '../context.js';
+import { parseFailOn } from '../fail-on.js';
+import { printReport } from '../findings-output.js';
 import { color, pad, print, printJson, statusLabel, truncateMiddle } from '../output.js';
 
 export interface ScanCommandOptions {
@@ -63,10 +66,12 @@ export function registerScan(program: Command): void {
     .description('Visit the configured pages in a real browser and record the JavaScript they load')
     .option('-s, --site <names>', 'only scan these sites (comma separated)')
     .option('-o, --output <file>', 'also write the scan result JSON to this file')
+    .option('--fail-on <severity>', 'exit with code 1 if a finding is at least this severe (info|low|medium|high|critical|none)')
     .option('--skip-preflight', 'skip DNS pre-flight checks (connections are still validated by the egress proxy)')
     .action(async (opts: ScanCommandOptions, command: Command) => {
       const g = globalOptions(command);
       const resolved = await loadConfig({ ...(g.config ? { configPath: g.config } : {}) });
+      const failOn = parseFailOn(opts.failOn, resolved.config.failOn);
       const sites = selectSites(resolved, opts.site);
       const run = await runScan(resolved, { sites, logLevel: logLevelFor(g), ...(opts.skipPreflight ? { skipPreflight: true } : {}) });
       if (opts.output) {
@@ -74,12 +79,17 @@ export function registerScan(program: Command): void {
         await mkdir(dirname(target), { recursive: true });
         await copyFile(run.scanPath, target);
       }
-      if (g.json) printJson(run.result);
+      const { report } = await analyzeScan(resolved, run.result, { scanPath: run.scanPath });
+      const reportPath = await saveReportJson(resolved, report);
+      if (g.json) printJson({ scan: run.result, report });
       else {
         printScanSummary(run.result, g.verbose === true);
+        printReport(report, g.verbose === true);
         print();
         print(color.gray(`Scan saved to ${run.scanPath}`));
+        print(color.gray(`Report saved to ${reportPath}`));
       }
-      if (run.result.status !== 'complete') process.exitCode = ExitCode.ScanIncomplete;
+      if (exceedsThreshold(report, failOn)) process.exitCode = ExitCode.FindingsThresholdExceeded;
+      else if (run.result.status !== 'complete') process.exitCode = ExitCode.ScanIncomplete;
     });
 }

@@ -4,6 +4,8 @@ import { ExitCode } from '../utils/exit-codes.js';
 import { toolVersion } from '../utils/version.js';
 import { registerInit } from './commands/init.js';
 import { registerScan } from './commands/scan.js';
+import { registerBaseline } from './commands/baseline.js';
+import { registerDiff } from './commands/diff.js';
 import { color } from './output.js';
 
 export function buildProgram(): Command {
@@ -19,6 +21,8 @@ export function buildProgram(): Command {
     .exitOverride();
   registerInit(program);
   registerScan(program);
+  registerBaseline(program);
+  registerDiff(program);
   return program;
 }
 

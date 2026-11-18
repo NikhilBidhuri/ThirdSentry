@@ -2,7 +2,7 @@ import type { DomScriptEvidence, PageEvidence, ScriptResponseEvidence } from '..
 import { compact } from '../utils/object.js';
 import { decodeDataUrl, frameContextOf, stripFragment, type DiscoveryContext, type ResourceCandidate } from './candidate.js';
 import { classifyExternal, scriptElementKind, type ScriptElementKind } from './resource-classifier.js';
-import { dataUrlIdentity, externalIdentity } from './resource-identity.js';
+import { blobIdentity, dataUrlIdentity, externalIdentity } from './resource-identity.js';
 import { sha256Hex } from '../analysis/hashing.js';
 import { isModuleSource } from '../analysis/parser.js';
 
@@ -73,7 +73,12 @@ function responseCandidate(
   if (elements.some((e) => e.viaDocumentWrite)) discovery.push('document-write');
   const integrity = elements.find((e) => e.integrity)?.integrity;
   return compact<ResourceCandidate>({
-    identity: externalIdentity(res.url, ctx.ignoreQueryParams),
+    // Identity follows the URL the page requested (first hop), so a change of
+    // redirect destination is detected as a change of the same resource.
+    // blob: URLs are random per page load, so blob code is identified by content.
+    identity: res.url.startsWith('blob:')
+      ? blobIdentity(ctx.pageKey, res.frameUrl, res.isMainFrame, body ? sha256Hex(body) : null)
+      : externalIdentity(chain[0] ?? res.url, ctx.ignoreQueryParams),
     type,
     pageKey: ctx.pageKey,
     originalUrl: chain[0],

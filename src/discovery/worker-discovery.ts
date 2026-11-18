@@ -32,6 +32,8 @@ export function discoverWorkersAndBlobs(page: PageEvidence, ctx: DiscoveryContex
     const isWasm = /wasm/i.test(blob.mimeType);
     if (!isScriptMime && !isWasm && !referencedBlobs.has(blob.blobUrl)) continue;
     if (seenBlobs.has(blob.blobUrl)) continue;
+    // Already captured from the network (Chromium reports blob: script loads).
+    if (responseUrls.has(blob.blobUrl) && page.scriptResponses.some((r) => r.url === blob.blobUrl && r.bodyStatus === 'captured')) continue;
     seenBlobs.add(blob.blobUrl);
     const body = blob.textBase64 !== undefined ? Buffer.from(blob.textBase64, 'base64') : undefined;
     const sha = body ? sha256Hex(body) : null;

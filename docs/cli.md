@@ -44,4 +44,34 @@ Visit the configured pages in a browser, discover executable resources, hash the
 | --- | --- |
 | `-s, --site <names>` | Only scan these sites (comma separated). |
 | `-o, --output <file>` | Also write the scan result JSON here. |
+| `--fail-on <severity>` | Exit with code 1 if any unsuppressed finding is at least this severe: `info`, `low`, `medium`, `high`, `critical` or `none`. Default: `failOn` from the config (`high`). |
 | `--skip-preflight` | Skip DNS pre-flight checks. Every connection is still validated by the egress proxy. |
+
+After scanning, the result is compared with each site's baseline (if one exists) and the analysis report is written to `.scriptdrift/reports/report.json`. Scans never modify baselines.
+
+## `scriptdrift baseline`
+
+Approve the current state (or selected findings) as expected. See [baselines.md](baselines.md) for the full workflow.
+
+| Option | Description |
+| --- | --- |
+| `-s, --site <names>` | Only these sites. |
+| `--from-scan <file>` | Scan result to approve (default: latest). |
+| `--approve <finding-ids>` | Approve only the changes behind these findings. |
+| `--keep-variants` | Keep previously approved hashes too. |
+| `--allow-partial` | Allow approving from an incomplete scan (complete pages only). |
+| `--reason <text>`, `--approved-by <name>` | Recorded in the approval history. |
+| `--dry-run` | Show the summary without writing. |
+| `-y, --yes` | Do not prompt. Required when stdin is not a terminal. |
+
+## `scriptdrift diff`
+
+Compare the latest scan (or `--scan <file>`) with the baselines without scanning again, and print findings and, where both versions are in the content cache, code diffs.
+
+| Option | Description |
+| --- | --- |
+| `-s, --site <names>` | Only these sites. |
+| `--scan <file>` | Scan result to compare. |
+| `--finding <id>` | Show a single finding. |
+| `--context <lines>` | Context lines in code diffs (default 3). |
+| `--fail-on <severity>` | As for `scan`. |

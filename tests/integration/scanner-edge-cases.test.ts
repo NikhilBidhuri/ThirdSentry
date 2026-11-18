@@ -43,7 +43,7 @@ describe('scanner edge cases', () => {
     expect(r).toBeDefined();
     expect(r?.originalUrl).toBe(`http://cdn.vendor-a.test:${server.port}/latest.js`);
     expect(r?.redirectChain).toEqual([`http://cdn.vendor-a.test:${server.port}/latest.js`]);
-    expect(r?.identity).toBe(`url:http://cdn.vendor-a.test:${server.port}/v2/lib.js`);
+    expect(r?.identity).toBe(`url:http://cdn.vendor-a.test:${server.port}/latest.js`);
   }, 60_000);
 
   it('reports a navigation timeout as an incomplete scan, never as complete', async () => {

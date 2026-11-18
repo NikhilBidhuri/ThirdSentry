@@ -7,11 +7,14 @@
  * different bytes over time (that is precisely what ScriptDrift detects),
  * and different URLs can serve identical bytes.
  *
- * External resources: identity is derived from the final response URL with
- * the fragment removed, scheme/host lowercased, default port removed and
- * query parameters kept (sorted by name for stability). Parameters listed in
- * the site's `ignoreQueryParams` (e.g. cache busters) are dropped from the
- * identity only, never from the stored URL.
+ * External resources: identity is derived from the URL the page requested
+ * (the first hop of any redirect chain) with the fragment removed,
+ * scheme/host lowercased, default port removed and query parameters kept
+ * (sorted by name for stability). Parameters listed in the site's
+ * `ignoreQueryParams` (e.g. cache busters) are dropped from the identity only,
+ * never from the stored URL. The final URL after redirects is recorded
+ * separately, so a changed redirect destination shows up as a change of the
+ * same resource.
  *
  * Inline scripts have no URL: identity combines the page, the frame and the
  * DOM position. Matching across scans additionally falls back to content

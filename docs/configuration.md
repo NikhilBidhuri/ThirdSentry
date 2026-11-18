@@ -161,3 +161,19 @@ See [privacy.md](privacy.md).
 | `storeScriptContent` | `false` | Keep script bodies in `.scriptdrift/cache/content/` (content-addressed). Needed to show code diffs between versions. |
 | `maxScanReports` | `50` | Scan result files to keep. |
 | `maxAgeDays` | `90` | Delete scan results, screenshots and cached content older than this. |
+
+## `risk`
+
+Risk scoring is explained in [rules.md](rules.md#risk-scoring). Every finding lists the signals that produced its score.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `thresholds.low` | `15` | Minimum score for `low`. Lower scores are `info`. |
+| `thresholds.medium` | `30` | Minimum score for `medium`. |
+| `thresholds.high` | `50` | Minimum score for `high`. |
+| `thresholds.critical` | `75` | Minimum score for `critical`. |
+| `weights` | `{}` | Override the weight of individual signals, e.g. `{ new-outbound-host: 0 }`. |
+
+## `failOn`
+
+Default `--fail-on` threshold for `scan` and `diff`: `info`, `low`, `medium`, `high` (default), `critical` or `none`.
