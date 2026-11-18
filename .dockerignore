@@ -1,0 +1,16 @@
+# Keep the build context small and free of secrets and scan data.
+.git
+.github
+node_modules
+dist
+coverage
+tests
+docs
+examples
+deploy
+.scriptdrift
+**/.scriptdrift
+.env
+.env.*
+*.log
+plan.md

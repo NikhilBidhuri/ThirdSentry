@@ -106,3 +106,13 @@ Send alerts for new findings in `report.json`. See [alerts.md](alerts.md).
 | `--dry-run` | Show what would be sent. |
 
 Exit code `4` if any channel failed.
+
+## Container pipeline commands
+
+Used by the [Docker deployment](docker.md), where each step runs in its own container. You normally do not run them by hand.
+
+| Command | Purpose |
+| --- | --- |
+| `scriptdrift egress-proxy [--listen 0.0.0.0:3128]` | Run the egress proxy that enforces the network policy. |
+| `scriptdrift collect --out <file> [--proxy <url>] [--no-chromium-sandbox] [--site]` | Browser collection only; writes untrusted evidence. |
+| `scriptdrift analyze --evidence <file> [--format] [--output] [--fail-on]` | Validate evidence, compare with baselines and write reports. No network, no alerts. |

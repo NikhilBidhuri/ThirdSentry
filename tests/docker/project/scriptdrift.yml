@@ -1,0 +1,17 @@
+# Configuration for the Docker verification run (tests/docker/verify.sh).
+version: 1
+sites:
+  - name: fixture
+    url: http://fixture:8080/
+    pages: [/]
+defaults:
+  scan:
+    timeout: 30000
+    waitUntil: load
+    settleMs: 500
+security:
+  network:
+    allowedPorts: [80, 443, 8080]
+    # The fixture runs on a private Docker network; allow exactly that host.
+    allowedPrivateHosts: [fixture]
+failOn: none

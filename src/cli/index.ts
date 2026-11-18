@@ -8,6 +8,7 @@ import { registerBaseline } from './commands/baseline.js';
 import { registerDiff } from './commands/diff.js';
 import { registerReport } from './commands/report.js';
 import { registerAlert } from './commands/alert.js';
+import { registerPipeline } from './commands/pipeline.js';
 import { color } from './output.js';
 
 export function buildProgram(): Command {
@@ -27,6 +28,7 @@ export function buildProgram(): Command {
   registerDiff(program);
   registerReport(program);
   registerAlert(program);
+  registerPipeline(program);
   return program;
 }
 

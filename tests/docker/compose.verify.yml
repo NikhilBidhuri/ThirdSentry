@@ -1,0 +1,53 @@
+# Overlay used by tests/docker/verify.sh to exercise the container pipeline
+# against a local fixture site (no real websites are contacted).
+#
+# The verification project (config + fixture server) is baked into a derived
+# image instead of bind-mounted from the host, so the check also works where
+# host bind mounts are unavailable (e.g. restricted Docker Desktop file sharing).
+# Networks, capabilities, read-only filesystems and the named volumes of the
+# real docker-compose.yml are kept unchanged.
+
+x-verify-image: &verify-image
+  image: scriptdrift:verify
+  build:
+    context: ./tests/docker
+    dockerfile_inline: |
+      FROM scriptdrift:local
+      COPY --chown=pwuser:pwuser project/scriptdrift.yml /work/scriptdrift.yml
+      COPY --chown=pwuser:pwuser fixture-server.mjs /fixture/server.mjs
+
+services:
+  fixture:
+    <<: *verify-image
+    entrypoint: ["node", "/fixture/server.mjs"]
+    read_only: true
+    cap_drop: [ALL]
+    networks: [egress]
+
+  egress-proxy:
+    <<: *verify-image
+    depends_on: [fixture]
+    volumes: !reset []
+
+  scanner:
+    <<: *verify-image
+    volumes: !override
+      - evidence:/evidence
+
+  analyzer:
+    <<: *verify-image
+    volumes: !override
+      - evidence:/evidence:ro
+      - reports:/work/.scriptdrift/reports
+      - state:/work/.scriptdrift/state
+      - cache:/work/.scriptdrift/cache
+      - baselines:/work/.scriptdrift/baselines:ro
+
+  alerter:
+    <<: *verify-image
+    volumes: !override
+      - reports:/work/.scriptdrift/reports:ro
+      - state:/work/.scriptdrift/state
+
+volumes:
+  baselines:

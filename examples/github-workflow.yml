@@ -1,0 +1,45 @@
+# .github/workflows/scriptdrift.yml in the repository that holds scriptdrift.yml and
+# the reviewed baselines (.scriptdrift/baselines/). See docs/github-actions.md.
+name: ScriptDrift Security Monitoring
+
+on:
+  schedule:
+    # Every 6 hours. GitHub may delay scheduled runs by minutes (sometimes longer)
+    # under load, and disables schedules in repositories without activity for 60 days.
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [scriptdrift.yml, .scriptdrift/baselines/**]
+
+# Least privilege: read the repository, upload SARIF. Add "issues: write" only
+# if alerts.github is enabled.
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: scriptdrift
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Replace <owner>/scriptdrift@<ref> with the repository and a pinned tag or commit SHA.
+      - uses: <owner>/scriptdrift@<ref>
+        with:
+          fail-on: high
+        env:
+          # Alert credentials come from repository secrets; never commit them.
+          SCRIPTDRIFT_SLACK_WEBHOOK: ${{ secrets.SCRIPTDRIFT_SLACK_WEBHOOK }}
+          SCRIPTDRIFT_REPORT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

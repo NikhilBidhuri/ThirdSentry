@@ -126,12 +126,13 @@ export class EgressProxy {
   }
 
   private record(event: ProxyConnectionEvent): void {
+    // Blocked attempts are always logged, even when event retention is capped (standalone proxy).
+    if (!event.allowed) this.log.info({ host: event.host, port: event.port, reason: event.reason }, 'blocked outbound connection');
     if (this.events.length >= this.options.maxRecordedEvents) {
       this.droppedEvents++;
       return;
     }
     this.events.push(event);
-    if (!event.allowed) this.log.info({ host: event.host, port: event.port, reason: event.reason }, 'blocked outbound connection');
   }
 
   private recordDecision(method: string, decision: DestinationDecision): void {

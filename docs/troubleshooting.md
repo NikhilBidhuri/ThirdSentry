@@ -11,9 +11,15 @@ Run `npx playwright install --with-deps chromium`, or use the Docker image.
 **Linux: `No usable sandbox!` / Chromium sandbox errors**
 ScriptDrift keeps Chromium's renderer sandbox enabled (`security.isolation.chromiumSandbox: true`). The sandbox needs unprivileged user namespaces or a setuid sandbox helper. Options, in order of preference:
 
-1. Enable unprivileged user namespaces on the host (`sysctl kernel.unprivileged_userns_clone=1`, or on Ubuntu 23.10+ an AppArmor profile allowing them for the browser).
-2. Run the scanner in the provided Docker setup, which applies a seccomp profile that permits the sandbox.
-3. As a last resort, inside a container that already isolates the browser, set `security.isolation.chromiumSandbox: false`. Do not do this on a shared host.
+1. Enable unprivileged user namespaces on the host (`sysctl kernel.unprivileged_userns_clone=1` on older Debian kernels; on Ubuntu 23.10+ `sysctl kernel.apparmor_restrict_unprivileged_userns=0` or an AppArmor profile that allows them for the browser).
+2. Run the scanner in the provided [Docker setup](docker.md). Its hardened scanner container cannot start Chromium's sandbox, so it runs with `--no-chromium-sandbox` and relies on the container boundary (no capabilities, read-only root filesystem, no network except the egress proxy, no secrets).
+3. As a last resort, outside containers, set `security.isolation.chromiumSandbox: false`. Do not do this on a shared host.
+
+**WebKit: `Host system is missing dependencies`**
+Playwright's WebKit needs extra system libraries (on Linux: `npx playwright install --with-deps webkit`). On some Windows editions WebKit cannot start at all; use Chromium or Firefox profiles there, or run in Docker.
+
+**Docker Desktop: `docker compose run` hangs at "Creating"**
+Bind-mounting files from the host (your `scriptdrift.yml` and baselines) requires Docker Desktop file sharing for that drive or folder. Enable it in Docker Desktop settings (Resources → File sharing) or run from a directory that is already shared.
 
 **`Compiled browser worker not found`**
 You are running ScriptDrift from TypeScript sources. Run `npm run build` first.
