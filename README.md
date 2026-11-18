@@ -34,6 +34,9 @@ npx scriptdrift init --url https://www.example.com --name my-store
 npx scriptdrift scan                   # see which scripts your pages load
 npx scriptdrift baseline               # review, then approve the current state
 npx scriptdrift scan --fail-on high    # later: detect drift; non-zero exit on findings
+npx scriptdrift diff                   # review findings (and code diffs, if content retention is on)
+npx scriptdrift baseline --approve <finding-id>   # approve a reviewed change
+npx scriptdrift csp-lint https://www.example.com  # analyse your Content-Security-Policy
 ```
 
 A scan prints what it found:
@@ -75,7 +78,7 @@ my-store https://www.example.com/ — complete (chromium 140.0.7339.16)
 
 ## Project status
 
-ScriptDrift is under active development. See [docs/limitations.md](docs/limitations.md) for an honest list of what it does not cover.
+ScriptDrift is a young project. The scanner, baselines, change detection, static analysis, reports, alerts, CSP linter, Docker pipeline and GitHub Action are implemented and covered by automated tests that run against local fixture servers. The alert integrations are tested against local mock servers, not against live Slack, GitHub or SMTP services, and the GitHub Action is not exercised by this repository's test suite. See [docs/limitations.md](docs/limitations.md) for an honest list of what ScriptDrift does not cover.
 
 ## License
 

@@ -9,6 +9,8 @@ import { registerDiff } from './commands/diff.js';
 import { registerReport } from './commands/report.js';
 import { registerAlert } from './commands/alert.js';
 import { registerPipeline } from './commands/pipeline.js';
+import { registerCspLint } from './commands/csp-lint.js';
+import { registerCleanup } from './commands/cleanup.js';
 import { color } from './output.js';
 
 export function buildProgram(): Command {
@@ -28,6 +30,8 @@ export function buildProgram(): Command {
   registerDiff(program);
   registerReport(program);
   registerAlert(program);
+  registerCspLint(program);
+  registerCleanup(program);
   registerPipeline(program);
   return program;
 }

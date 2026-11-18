@@ -151,6 +151,13 @@ describe('drift detection end to end', () => {
     expect(await readFile(join(out, 'report.html'), 'utf8')).toContain('ScriptDrift report');
     const a = await cli('--json', 'alert', '--dry-run');
     expect(a.code).toBe(0);
+    const csp = await cli('--json', 'csp-lint', '--from-scan');
+    expect(csp.code).toBe(0);
+    const lint = JSON.parse(csp.stdout) as { targets: Array<{ findings: Array<{ id: string }> }> };
+    expect(lint.targets.length).toBe(2);
+    expect(lint.targets[0]?.findings.map((f) => f.id)).toContain('no-policy');
+    const clean = await cli('--json', 'cleanup', '--dry-run');
+    expect(clean.code).toBe(0);
   });
 
   it('rejects unknown finding IDs', async () => {

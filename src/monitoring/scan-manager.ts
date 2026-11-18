@@ -4,7 +4,8 @@ import { processEvidence, type ProcessedScan } from '../analysis/evidence-proces
 import { analyzeResources } from '../analysis/script-analysis.js';
 import { effectivePort, validateTargetUrlWithDns } from '../security/url-validator.js';
 import { runIsolatedCollection, validateEvidence } from '../security/worker-sandbox.js';
-import { ContentStore, saveScanResult, saveScreenshots } from '../storage/filesystem-store.js';
+import { applyRetention, ContentStore, saveScanResult, saveScreenshots } from '../storage/filesystem-store.js';
+import { loadBaseline } from '../baseline/baseline-manager.js';
 import type { ScanEvidence } from '../types/evidence.js';
 import { ConfigError, ScriptDriftError } from '../utils/errors.js';
 import { getLogger } from '../utils/logger.js';
@@ -93,7 +94,36 @@ export async function persistScan(resolved: ResolvedConfig, evidence: ScanEviden
     const store = new ContentStore(resolved.paths.content);
     for (const [sha, data] of processed.contents) await store.put(sha, data);
   }
+  await enforceRetention(resolved);
   return { ...processed, scanPath };
+}
+
+/** Content hashes referenced by any approved baseline (kept by retention). */
+export async function baselineContentHashes(resolved: ResolvedConfig): Promise<Set<string>> {
+  const keep = new Set<string>();
+  for (const site of resolved.config.sites) {
+    try {
+      const baseline = await loadBaseline(resolved.paths, site.name);
+      for (const r of baseline?.resources ?? []) for (const h of r.approvedHashes) if (h.sha256) keep.add(h.sha256);
+    } catch {
+      // An invalid baseline is reported elsewhere; retention stays conservative.
+    }
+  }
+  return keep;
+}
+
+/** Apply the configured retention policy after a scan. Failures are logged, never fatal. */
+export async function enforceRetention(resolved: ResolvedConfig): Promise<void> {
+  try {
+    const result = await applyRetention(resolved.paths, {
+      maxScans: resolved.config.retention.maxScanReports,
+      maxAgeDays: resolved.config.retention.maxAgeDays,
+      keepContent: await baselineContentHashes(resolved),
+    });
+    if (result.removedScans + result.removedContent + result.removedScreenshots > 0) getLogger('retention').info(result, 'applied retention policy');
+  } catch (error) {
+    getLogger('retention').warn({ err: error instanceof Error ? error.message : String(error) }, 'could not apply retention policy');
+  }
 }
 
 export async function runScan(resolved: ResolvedConfig, options: ScanRunOptions): Promise<ScanRunResult> {

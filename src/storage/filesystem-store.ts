@@ -91,18 +91,37 @@ export interface CleanupResult {
   readonly removedScans: number;
   readonly removedContent: number;
   readonly removedScreenshots: number;
+  readonly keptReferencedContent: number;
+  readonly dryRun: boolean;
 }
 
-/** Apply retention: keep at most `maxScans` scan files and remove anything older than `maxAgeDays`. */
-export async function applyRetention(
-  paths: StoragePaths,
-  options: { maxScans: number; maxAgeDays: number; now?: Date; purgeContent?: boolean },
-): Promise<CleanupResult> {
+export interface RetentionOptions {
+  readonly maxScans: number;
+  readonly maxAgeDays: number;
+  readonly now?: Date;
+  /** Delete all cached script content (except content referenced by baselines, unless purgeReferenced). */
+  readonly purgeContent?: boolean;
+  readonly purgeReferenced?: boolean;
+  /** Content hashes still referenced by approved baselines (kept so code diffs remain possible). */
+  readonly keepContent?: ReadonlySet<string>;
+  readonly dryRun?: boolean;
+}
+
+/**
+ * Apply retention: keep at most `maxScans` scan files, and remove scan
+ * results, screenshots and cached script content older than `maxAgeDays`.
+ * Baselines, reports and finding state are never touched.
+ */
+export async function applyRetention(paths: StoragePaths, options: RetentionOptions): Promise<CleanupResult> {
   const now = (options.now ?? new Date()).getTime();
   const maxAgeMs = options.maxAgeDays * 86_400_000;
+  const remove = async (path: string, recursive = false): Promise<void> => {
+    if (!options.dryRun) await rm(path, { recursive, force: true });
+  };
   let removedScans = 0;
   let removedContent = 0;
   let removedScreenshots = 0;
+  let keptReferencedContent = 0;
 
   if (await pathExists(paths.scans)) {
     const files = (await readdir(paths.scans)).filter((f) => f.endsWith('.json'));
@@ -110,7 +129,7 @@ export async function applyRetention(
     withTimes.sort((a, b) => b.mtime - a.mtime);
     for (const [i, entry] of withTimes.entries()) {
       if (i >= options.maxScans || now - entry.mtime > maxAgeMs) {
-        await rm(join(paths.scans, entry.f), { force: true });
+        await remove(join(paths.scans, entry.f));
         removedScans++;
       }
     }
@@ -122,7 +141,7 @@ export async function applyRetention(
       const full = join(shotsDir, dir);
       const info = await stat(full);
       if (now - info.mtimeMs > maxAgeMs) {
-        await rm(full, { recursive: true, force: true });
+        await remove(full, true);
         removedScreenshots++;
       }
     }
@@ -131,15 +150,20 @@ export async function applyRetention(
   if (await pathExists(paths.content)) {
     for (const prefix of await readdir(paths.content)) {
       const dir = join(paths.content, prefix);
+      if (!(await stat(dir)).isDirectory()) continue;
       for (const file of await readdir(dir)) {
         const full = join(dir, file);
         const info = await stat(full);
-        if (options.purgeContent || now - info.mtimeMs > maxAgeMs) {
-          await rm(full, { force: true });
-          removedContent++;
+        const expired = options.purgeContent === true || now - info.mtimeMs > maxAgeMs;
+        if (!expired) continue;
+        if (options.keepContent?.has(file) && !options.purgeReferenced) {
+          keptReferencedContent++;
+          continue;
         }
+        await remove(full);
+        removedContent++;
       }
     }
   }
-  return { removedScans, removedContent, removedScreenshots };
+  return { removedScans, removedContent, removedScreenshots, keptReferencedContent, dryRun: options.dryRun === true };
 }

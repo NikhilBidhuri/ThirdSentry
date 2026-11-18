@@ -107,6 +107,36 @@ Send alerts for new findings in `report.json`. See [alerts.md](alerts.md).
 
 Exit code `4` if any channel failed.
 
+## `scriptdrift csp-lint`
+
+Analyse Content-Security-Policy headers. See [csp.md](csp.md).
+
+```bash
+scriptdrift csp-lint https://www.example.com [more URLs...]
+scriptdrift csp-lint --from-scan [--site <names>]
+```
+
+| Option | Description |
+| --- | --- |
+| `--from-scan` | Use headers captured by the latest scan (no network). |
+| `-s, --site <names>` | With `--from-scan`, only these sites. |
+| `--fail-on <level>` | `error`, `warning`, `info` or `none` (default). |
+
+Works without a configuration file (default network policy). Exit `1` when `--fail-on` is exceeded, `3` when a URL could not be fetched.
+
+## `scriptdrift cleanup`
+
+Delete old scan results, screenshots and cached script bodies. Baselines are never touched. See [privacy.md](privacy.md#retention).
+
+| Option | Description |
+| --- | --- |
+| `--older-than <days>` | Age limit (default `retention.maxAgeDays`). |
+| `--keep <n>` | Scan results to keep (default `retention.maxScanReports`). |
+| `--all-content` | Delete all cached script bodies, except those referenced by baselines. |
+| `--include-referenced` | With `--all-content`, delete baseline-referenced bodies too. |
+| `--reset-state` | Delete finding/alert state. |
+| `--dry-run` | Only report what would be deleted. |
+
 ## Container pipeline commands
 
 Used by the [Docker deployment](docker.md), where each step runs in its own container. You normally do not run them by hand.

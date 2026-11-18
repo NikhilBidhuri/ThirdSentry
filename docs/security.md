@@ -82,7 +82,7 @@ In the default `process` mode the browser runs in a separate Node.js process tha
 - is told only the sites, limits and network policy. It does not know where baselines, reports or state are stored;
 - is killed if it exceeds the scan time budget.
 
-**Limitation:** the worker process runs as the same OS user, so this mode does not provide filesystem isolation. If the browser and its sandbox were both compromised, the attacker could read files that user can read. Use the [container deployment](docker.md) for strong isolation in production. There the browser container has no secrets, no baseline mount, a read-only root filesystem, dropped capabilities and network access **only** to the egress proxy, so network restrictions are enforced at the container network layer as well as by the proxy.
+**Limitation:** the worker process runs as the same OS user, so this mode does not provide filesystem isolation. If the browser and its sandbox were both compromised, the attacker could read files that user can read. Use the [container deployment](docker.md) for strong isolation in production. There the browser container has no secrets, no baseline mount, a read-only root filesystem, dropped capabilities and network access **only** to the egress proxy, so network restrictions are enforced at the container network layer as well as by the proxy. `tests/docker/verify.sh` checks these properties against a running deployment (no direct internet from the scanner, metadata/private/port blocks at the proxy, no network for the analyzer, no credentials in the scanner).
 
 ### 4. Evidence is untrusted
 
@@ -108,6 +108,14 @@ Alert credentials are read from environment variables (`${VAR}` interpolation is
 | Pages per scan | 100 |
 | Evidence accepted from the worker | 512 MiB |
 | Worker V8 heap / page V8 heap | 2 GiB / 1 GiB |
+
+### 7. Server-side fetches
+
+`csp-lint` fetches URLs from Node.js rather than the browser. It uses an HTTP client that applies the same network policy: each request and each redirect hop is validated, DNS is resolved once by the policy and the socket connects to the validated address (custom `lookup`), TLS certificates are still verified for the original hostname, redirects are limited and bodies are capped.
+
+### 8. Reports are inert
+
+The HTML report embeds strings that originate from scanned pages (URLs, hostnames, error text). All of them are HTML-escaped, the report loads no external resources and carries a `Content-Security-Policy` that forbids scripts. Slack and GitHub messages escape their respective markup, so hostile URLs cannot trigger mentions or formatting tricks.
 
 ## Residual risks
 
