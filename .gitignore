@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+
+# ScriptDrift runtime output (never commit scan evidence by accident)
+.scriptdrift/reports/
+.scriptdrift/cache/
+.scriptdrift/state/
+.scriptdrift/evidence/
+# Test scratch
+tests/.tmp/

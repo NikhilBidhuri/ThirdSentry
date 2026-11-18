@@ -1,0 +1,64 @@
+{
+  "name": "scriptdrift",
+  "version": "0.1.0",
+  "description": "Watch the code you don't control. Open-source third-party JavaScript security monitoring.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "scriptdrift": "dist/cli/bin.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "keywords": [
+    "security",
+    "javascript",
+    "supply-chain",
+    "third-party",
+    "magecart",
+    "csp",
+    "monitoring",
+    "playwright"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@babel/generator": "^8.1.2",
+    "@babel/parser": "^8.1.2",
+    "@babel/traverse": "^8.1.2",
+    "@babel/types": "^8.1.2",
+    "commander": "^15.1.0",
+    "diff": "^9.0.0",
+    "nodemailer": "^10.6.0",
+    "pino": "^10.4.0",
+    "playwright": "^1.65.1",
+    "tldts": "^7.5.4",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.19.2",
+    "@types/nodemailer": "^8.0.2",
+    "eslint": "^10.15.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.73.0",
+    "vitest": "^4.1.12"
+  }
+}
