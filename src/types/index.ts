@@ -91,11 +91,23 @@ export interface ScriptResource {
   indicators?: IndicatorSummary;
 }
 
+export interface IndicatorMatch {
+  readonly ruleId: string;
+  readonly line: number;
+  readonly column: number;
+  readonly snippet: string;
+  readonly detail?: string;
+}
+
 export interface IndicatorSummary {
-  /** Map of rule id → number of matches. */
-  readonly counts: Readonly<Record<string, number>>;
   readonly analyzed: boolean;
   readonly error?: string;
+  /** Map of rule id → number of matches. */
+  readonly counts: Readonly<Record<string, number>>;
+  /** Up to a few example matches per rule, with short source excerpts. */
+  readonly matches: readonly IndicatorMatch[];
+  /** Hostnames referenced by the code (URL literals, network calls). */
+  readonly hosts: readonly string[];
 }
 
 export interface OutboundRequest {

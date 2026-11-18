@@ -177,3 +177,28 @@ Risk scoring is explained in [rules.md](rules.md#risk-scoring). Every finding li
 ## `failOn`
 
 Default `--fail-on` threshold for `scan` and `diff`: `info`, `low`, `medium`, `high` (default), `critical` or `none`.
+
+## `analysis` and `rules`
+
+Static behaviour analysis is described in [rules.md](rules.md).
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `analysis.enabled` | `true` | Analyse captured scripts. |
+| `analysis.maxScriptBytes` | 3 MiB | Larger scripts are not analysed. |
+| `rules.<id>.enabled` | `true` | Turn a rule off. |
+| `rules.<id>.severity` | rule default | Override the rule's severity. |
+| `rules.<id>.weight` | from severity | Risk weight of a new match. |
+| `rules.<id>.ignoreResources` | `[]` | URL/identity globs the rule ignores. |
+
+## `domains`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `allow` | `[]` | Domains/hosts never reported as new. |
+| `deny` | `[]` | Domains/hosts always reported (critical), even if approved. |
+| `suspicious` | `[]` | Reputation hints; raise the risk of new destinations that match. |
+
+## `suppressions`
+
+A list of documented suppressions. Each entry needs a `reason` and at least one of `id`, `kind`, `rule`, `resource`, `domain`; `site` and `expires` are optional. See [rules.md](rules.md#suppressing-false-positives).

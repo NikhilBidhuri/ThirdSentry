@@ -20,6 +20,9 @@ export interface ScanCommandOptions {
   skipPreflight?: boolean;
 }
 
+/** Indicators shown in the default resource list (others appear with --verbose). */
+const NOTABLE_RULES = new Set(['SD-EVAL', 'SD-NEW-FUNCTION', 'SD-SENSITIVE-FIELD-ACCESS', 'SD-KEYSTROKE-CAPTURE', 'SD-CLIPBOARD', 'SD-NETWORK-API-HOOK', 'SD-OBFUSCATION', 'SD-EXFIL-COMBINATION']);
+
 export function printScanSummary(result: ScanResult, verbose: boolean): void {
   const s = result.summary;
   print(color.bold(`Scan ${result.scanId}: ${statusLabel(result.status)}`));
@@ -45,7 +48,8 @@ export function printScanSummary(result: ScanResult, verbose: boolean): void {
       print(`  ${pad('TYPE', 16)} ${pad('PARTY', 6)} ${pad('SHA-256', 14)} RESOURCE`);
       for (const r of site.resources) {
         const label = r.finalUrl ?? r.originalUrl ?? r.identity;
-        const flags = [r.dynamic ? 'dynamic' : '', r.content.status !== 'captured' ? r.content.status : '', r.sri?.valid === false ? 'SRI-MISMATCH' : '']
+        const notable = Object.keys(r.indicators?.counts ?? {}).filter((id) => verbose || NOTABLE_RULES.has(id));
+        const flags = [r.dynamic ? 'dynamic' : '', r.content.status !== 'captured' ? r.content.status : '', r.sri?.valid === false ? 'SRI-MISMATCH' : '', ...notable]
           .filter(Boolean)
           .join(',');
         print(
@@ -79,7 +83,7 @@ export function registerScan(program: Command): void {
         await mkdir(dirname(target), { recursive: true });
         await copyFile(run.scanPath, target);
       }
-      const { report } = await analyzeScan(resolved, run.result, { scanPath: run.scanPath });
+      const { report } = await analyzeScan(resolved, run.result, { scanPath: run.scanPath, updateState: true });
       const reportPath = await saveReportJson(resolved, report);
       if (g.json) printJson({ scan: run.result, report });
       else {

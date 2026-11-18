@@ -10,6 +10,9 @@ import { toolVersion } from '../utils/version.js';
 import { compareSite, type ComparisonResult } from './comparison-engine.js';
 import { buildFindings } from './finding-engine.js';
 import { join } from 'node:path';
+import { applySuppressions } from './suppressions.js';
+import { annotateFindings, loadFindingState, saveFindingState, trackFindings } from './dedup-state.js';
+import { getLogger } from '../utils/logger.js';
 
 /**
  * Trusted analysis step: compare a stored scan with the approved baselines
@@ -19,6 +22,8 @@ import { join } from 'node:path';
 export interface AnalysisOptions {
   readonly scanPath: string;
   readonly now?: Date;
+  /** Update the finding state (new/recurring tracking). Read-only commands pass false. */
+  readonly updateState?: boolean;
 }
 
 export interface AnalysisOutcome {
@@ -86,9 +91,15 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
       });
       continue;
     }
-    const comparison = compareSite(site, baseline);
+    const comparison = compareSite(site, baseline, resolved.config.domains);
     comparisons.set(site.name, comparison);
-    const siteFindings = buildFindings(comparison.changes, { site, risk: resolved.config.risk, now });
+    const siteFindings = buildFindings(comparison.changes, {
+      site,
+      risk: resolved.config.risk,
+      rules: resolved.config.rules,
+      domains: resolved.config.domains,
+      now,
+    });
     findings.push(...siteFindings);
     const kinds = comparison.changes.map((c) => c.kind);
     const lastApproval = baseline.approvals.at(-1);
@@ -113,7 +124,18 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
     });
   }
 
-  const sorted = sortFindings(findings);
+  const suppression = applySuppressions(findings, resolved.config.suppressions, { now, risk: resolved.config.risk });
+  for (const e of suppression.expired) {
+    getLogger('analysis').warn({ suppression: e.index, expires: e.expires }, `suppression "${e.reason}" has expired and no longer applies`);
+  }
+  const state = await loadFindingState(resolved.paths);
+  if (options.updateState) {
+    trackFindings(suppression.findings, state, now);
+    await saveFindingState(resolved.paths, state);
+  } else {
+    annotateFindings(suppression.findings, state);
+  }
+  const sorted = sortFindings(suppression.findings);
   const base: Omit<AnalysisReport, 'headline'> = {
     schemaVersion: 1,
     kind: 'scriptdrift-report',

@@ -48,8 +48,10 @@ export const SIGNALS = {
   'iframe-origin-added': { weight: 18, description: 'A new iframe origin is embedded in the page' },
   'iframe-origin-removed': { weight: 3, description: 'An approved iframe origin is no longer embedded' },
   'correlated-new-destination': { weight: 20, description: 'On the same page, a new outbound destination appeared in the same scan', suspicious: true },
-  'denylisted-domain': { weight: 70, description: 'The domain is on the configured denylist', suspicious: true },
-  'allowlisted-domain': { weight: -20, description: 'The domain is on the configured allowlist' },
+  'denylisted-domain': { weight: 80, description: 'The domain is on the configured denylist', suspicious: true },
+  'suspicious-domain': { weight: 30, description: 'The domain matches a configured reputation warning (domains.suspicious)', suspicious: true },
+  'ip-address-destination': { weight: 15, description: 'The destination is a raw IP address rather than a domain name', suspicious: true },
+  'script-references-new-destination': { weight: 25, description: 'The changed script itself references the new outbound destination', suspicious: true },
 } as const satisfies Record<string, SignalDefinition>;
 
 export type SignalId = keyof typeof SIGNALS | `rule:${string}` | `new-rule:${string}` | (string & {});
@@ -73,7 +75,9 @@ export function customSignal(id: string, description: string, weight: number, co
 }
 
 export function isSuspiciousSignal(s: Signal): boolean {
-  if (s.id.startsWith('rule:') || s.id.startsWith('new-rule:')) return s.weight > 0;
+  // Only rules of medium severity or above (weight >= 10) make a finding "suspicious";
+  // low-severity indicators such as storage access are common in legitimate code.
+  if (s.id.startsWith('rule:') || s.id.startsWith('new-rule:')) return s.weight >= 10;
   const def = (SIGNALS as Record<string, SignalDefinition>)[s.id];
   return def?.suspicious === true;
 }

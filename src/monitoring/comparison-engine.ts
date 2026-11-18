@@ -1,4 +1,6 @@
 import type { Baseline, BaselineResource } from '../baseline/baseline-schema.js';
+import type { DomainPolicy } from '../config/schema.js';
+import { EMPTY_DOMAIN_POLICY, evaluateDomain } from '../analysis/domain-analyzer.js';
 import type { ChangeKind } from '../types/findings.js';
 import type { ScriptResource, SiteResult } from '../types/index.js';
 
@@ -68,7 +70,7 @@ function hashApproved(r: ScriptResource, b: BaselineResource): 'raw' | 'normaliz
   return false;
 }
 
-export function compareSite(site: SiteResult, baseline: Baseline): ComparisonResult {
+export function compareSite(site: SiteResult, baseline: Baseline, policy: DomainPolicy = EMPTY_DOMAIN_POLICY): ComparisonResult {
   const changes: Change[] = [];
   let unchanged = 0;
   const baselineById = new Map(baseline.resources.map((r) => [r.identity, r]));
@@ -178,6 +180,7 @@ export function compareSite(site: SiteResult, baseline: Baseline): ComparisonRes
   const newScriptDomains = new Map<string, ScriptResource[]>();
   for (const r of site.resources) {
     if (!r.hostname || !r.registrableDomain || approvedScriptDomains.has(r.registrableDomain)) continue;
+    if (evaluateDomain(r.hostname, r.registrableDomain, policy).allowed) continue;
     const list = newScriptDomains.get(r.registrableDomain) ?? [];
     list.push(r);
     newScriptDomains.set(r.registrableDomain, list);
@@ -195,6 +198,7 @@ export function compareSite(site: SiteResult, baseline: Baseline): ComparisonRes
   const approvedOutbound = new Set(baseline.domains.outbound);
   const approvedHosts = new Set(baseline.domains.outboundHosts);
   for (const dest of site.destinations) {
+    if (evaluateDomain(dest.hostname, dest.registrableDomain, policy).allowed) continue;
     if (!approvedOutbound.has(dest.registrableDomain)) {
       if (changes.some((c) => c.kind === 'new-outbound-domain' && c.domain === dest.registrableDomain)) continue;
       const sameDomain = site.destinations.filter((d) => d.registrableDomain === dest.registrableDomain);
@@ -228,6 +232,8 @@ export function compareSite(site: SiteResult, baseline: Baseline): ComparisonRes
   const currentIframes = new Set(site.domains.iframes);
   for (const origin of currentIframes) {
     if (approvedIframes.has(origin)) continue;
+    const originHost = hostOf(origin);
+    if (originHost && evaluateDomain(originHost, undefined, policy).allowed) continue;
     changes.push({
       kind: 'iframe-origin-added',
       origin,
@@ -240,6 +246,25 @@ export function compareSite(site: SiteResult, baseline: Baseline): ComparisonRes
     for (const origin of approvedIframes) {
       if (!currentIframes.has(origin)) changes.push({ kind: 'iframe-origin-removed', origin, pages: [], details: {} });
     }
+  }
+
+  // Denylisted domains are reported on every scan, whether or not they were approved.
+  const denied = new Map<string, { domain: string; pages: Set<string>; uses: Set<string> }>();
+  const noteDenied = (host: string, domain: string | undefined, pages: readonly string[], use: string): void => {
+    if (!evaluateDomain(host, domain, policy).denied) return;
+    const entry = denied.get(host) ?? { domain: domain ?? host, pages: new Set<string>(), uses: new Set<string>() };
+    pages.forEach((p) => entry.pages.add(p));
+    entry.uses.add(use);
+    denied.set(host, entry);
+  };
+  for (const r of site.resources) if (r.hostname) noteDenied(r.hostname, r.registrableDomain, r.pages, 'serves scripts');
+  for (const d of site.destinations) noteDenied(d.hostname, d.registrableDomain, d.pages, 'receives requests');
+  for (const origin of currentIframes) {
+    const h = hostOf(origin);
+    if (h) noteDenied(h, undefined, [], 'is embedded as an iframe');
+  }
+  for (const [host, entry] of denied) {
+    changes.push({ kind: 'denylisted-domain', domain: entry.domain, host, pages: [...entry.pages].sort(), details: { uses: [...entry.uses].join(', ') } });
   }
 
   return { site: site.name, changes, unchanged, pagesNotCompared };

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RULES_BY_ID } from '../analysis/indicator-rules.js';
 
 /**
  * ScriptDrift configuration schema (scriptdrift.yml).
@@ -175,6 +176,61 @@ export const RiskSchema = z
   })
   .strict();
 
+export const RuleConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    /** Override the rule's severity (affects the default weight of its signal). */
+    severity: z.enum(SEVERITIES).optional(),
+    /** Override the risk weight contributed by a new match of this rule. */
+    weight: z.number().min(0).max(100).optional(),
+    /** Resource URL globs (e.g. "https://www.googletagmanager.com/*") this rule ignores. */
+    ignoreResources: z.array(z.string().min(1)).default([]),
+  })
+  .strict();
+
+export const AnalysisSchema = z
+  .object({
+    /** Run static behaviour analysis on captured scripts. */
+    enabled: z.boolean().default(true),
+    /** Scripts larger than this are not statically analysed. */
+    maxScriptBytes: z.number().int().min(1024).max(50 * 1024 * 1024).default(3 * 1024 * 1024),
+  })
+  .strict();
+
+export const DomainPolicySchema = z
+  .object({
+    /** Domains/hosts treated as approved everywhere (never reported as new). */
+    allow: z.array(hostPattern).default([]),
+    /** Domains/hosts that must never be used. Always reported, even if in a baseline. */
+    deny: z.array(hostPattern).default([]),
+    /** Reputation hints: domains considered suspicious (raise risk when contacted). */
+    suspicious: z.array(hostPattern).default([]),
+  })
+  .strict();
+
+export const SuppressionSchema = z
+  .object({
+    /** Finding ID (SD-xxxxxxxxxxxx) to suppress. */
+    id: z.string().regex(/^SD-[0-9a-f]{12}$/).optional(),
+    /** Finding kind (e.g. new-outbound-host) or rule id (e.g. SD-COOKIE-ACCESS). */
+    kind: z.string().max(64).optional(),
+    rule: z.string().max(64).optional(),
+    site: z.string().max(64).optional(),
+    /** Resource URL or identity glob. */
+    resource: z.string().max(4096).optional(),
+    /** Domain/host pattern. */
+    domain: hostPattern.optional(),
+    /** Why this is suppressed. Required: undocumented suppressions are not allowed. */
+    reason: z.string().min(3).max(2_000),
+    /** ISO date after which the suppression stops applying. */
+    expires: z
+      .string()
+      .refine((v) => !Number.isNaN(Date.parse(v)), 'must be an ISO date such as 2026-12-31')
+      .optional(),
+  })
+  .strict()
+  .refine((s) => s.id ?? s.kind ?? s.rule ?? s.resource ?? s.domain, 'a suppression needs at least one of id, kind, rule, resource or domain');
+
 export const DefaultsSchema = z
   .object({
     browser: BrowserOptionsSchema.prefault({}),
@@ -194,6 +250,10 @@ export const ConfigSchema = z
     serviceWorkers: ServiceWorkerSchema.prefault({}),
     retention: RetentionSchema.prefault({}),
     risk: RiskSchema.prefault({}),
+    analysis: AnalysisSchema.prefault({}),
+    rules: z.record(z.string().regex(/^SD-[A-Z0-9-]+$/, 'rule ids look like SD-EVAL'), RuleConfigSchema).default({}),
+    domains: DomainPolicySchema.prefault({}),
+    suppressions: z.array(SuppressionSchema).default([]),
     /** Default --fail-on threshold for scan/diff (`none` never fails on findings). */
     failOn: z.enum([...SEVERITIES, 'none']).default('high'),
   })
@@ -206,6 +266,11 @@ export const ConfigSchema = z
       }
       seen.add(site.name);
     });
+    for (const id of Object.keys(cfg.rules)) {
+      if (!RULES_BY_ID.has(id)) {
+        ctx.addIssue({ code: 'custom', path: ['rules', id], message: `unknown rule "${id}" (known: ${[...RULES_BY_ID.keys()].join(', ')})` });
+      }
+    }
   });
 
 export type ScriptDriftConfig = z.infer<typeof ConfigSchema>;
@@ -215,3 +280,6 @@ export type BrowserProfileName = (typeof BROWSER_PROFILES)[number];
 export type Severity = (typeof SEVERITIES)[number];
 export type Limits = z.infer<typeof LimitsSchema>;
 export type NetworkSecurityConfig = z.infer<typeof NetworkSecuritySchema>;
+export type RuleConfig = z.infer<typeof RuleConfigSchema>;
+export type DomainPolicy = z.infer<typeof DomainPolicySchema>;
+export type Suppression = z.infer<typeof SuppressionSchema>;

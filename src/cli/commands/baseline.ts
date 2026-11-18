@@ -52,7 +52,6 @@ export function approvalItemsFor(change: Change): ApprovalItem[] {
     case 'redirect-changed':
     case 'content-unavailable':
     case 'sri-mismatch':
-    case 'behavior-indicator':
       return change.identity ? [{ kind: 'resource', value: change.identity }] : [];
     case 'resource-moved':
       return [
@@ -147,8 +146,8 @@ export function registerBaseline(program: Command): void {
         let findings: Finding[] = [];
         let changes: readonly Change[] = [];
         if (previous) {
-          changes = compareSite(site, previous).changes;
-          findings = buildFindings(changes, { site, risk: resolved.config.risk });
+          changes = compareSite(site, previous, resolved.config.domains).changes;
+          findings = buildFindings(changes, { site, risk: resolved.config.risk, rules: resolved.config.rules, domains: resolved.config.domains });
         }
         if (requested.size > 0) {
           if (!previous) continue;

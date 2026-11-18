@@ -1,6 +1,7 @@
 import { collectEvidence, newScanId, type CollectRequest } from '../browser/collector.js';
 import { createNetworkPolicy, type ResolvedConfig, type ResolvedSite } from '../config/loader.js';
 import { processEvidence, type ProcessedScan } from '../analysis/evidence-processor.js';
+import { analyzeResources } from '../analysis/script-analysis.js';
 import { effectivePort, validateTargetUrlWithDns } from '../security/url-validator.js';
 import { runIsolatedCollection, validateEvidence } from '../security/worker-sandbox.js';
 import { ContentStore, saveScanResult, saveScreenshots } from '../storage/filesystem-store.js';
@@ -81,6 +82,11 @@ export async function persistScan(resolved: ResolvedConfig, evidence: ScanEviden
     maxRequestsStoredPerPage: 1000,
     maxResourceBytes: resolved.config.limits.maxResourceBytes,
   });
+  analyzeResources(
+    processed.result.sites.flatMap((s) => s.resources),
+    processed.contents,
+    resolved.config,
+  );
   const scanPath = await saveScanResult(resolved.paths, processed.result);
   await saveScreenshots(resolved.paths, processed.screenshots);
   if (resolved.config.retention.storeScriptContent) {
