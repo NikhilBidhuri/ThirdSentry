@@ -1,0 +1,11 @@
+# ThirdSentry scheduled scans (install with: crontab -e, as a user allowed to run docker).
+# Every 6 hours. Adjust the path to where docker-compose.yml lives.
+# flock prevents overlapping runs if a scan takes longer than the interval.
+0 */6 * * * cd /opt/thirdsentry && flock -n /tmp/thirdsentry.lock ./scripts/run-scan.sh >> /var/log/thirdsentry/scan.log 2>&1
+
+# Without Docker (npm install in a project directory; browser runs in a separate
+# process with a scrubbed environment but without container isolation):
+# 0 */6 * * * cd /srv/monitoring && flock -n /tmp/thirdsentry.lock npx thirdsentry scan >> /var/log/thirdsentry/scan.log 2>&1
+
+# Weekly cleanup of old reports and cached content (retention settings in thirdsentry.yml):
+# 30 3 * * 0 cd /opt/thirdsentry && docker compose run --rm tools cleanup >> /var/log/thirdsentry/cleanup.log 2>&1

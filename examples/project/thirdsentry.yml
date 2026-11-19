@@ -1,0 +1,30 @@
+# Example ThirdSentry project used by docker-compose.yml.
+# Copy this directory, point THIRDSENTRY_PROJECT_DIR at it, and edit the sites.
+version: 1
+
+defaults:
+  browser:
+    profile: desktop-chromium
+  scan:
+    timeout: 60000
+    waitUntil: networkidle
+    settleMs: 3000
+
+sites:
+  - name: example
+    url: https://example.com
+    pages:
+      - /
+    sensitivePages: []
+
+failOn: high
+
+alerts:
+  minSeverity: medium
+  slack:
+    enabled: false
+    webhookUrl: ${THIRDSENTRY_SLACK_WEBHOOK}
+  webhook:
+    enabled: false
+    url: ${THIRDSENTRY_WEBHOOK_URL}
+    secret: ${THIRDSENTRY_WEBHOOK_SECRET}

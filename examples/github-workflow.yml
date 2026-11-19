@@ -1,0 +1,45 @@
+# .github/workflows/thirdsentry.yml in the repository that holds thirdsentry.yml and
+# the reviewed baselines (.thirdsentry/baselines/). See docs/github-actions.md.
+name: ThirdSentry Security Monitoring
+
+on:
+  schedule:
+    # Every 6 hours. GitHub may delay scheduled runs by minutes (sometimes longer)
+    # under load, and disables schedules in repositories without activity for 60 days.
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [thirdsentry.yml, .thirdsentry/baselines/**]
+
+# Least privilege: read the repository, upload SARIF. Add "issues: write" only
+# if alerts.github is enabled.
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: thirdsentry
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Replace <owner>/thirdsentry@<ref> with the repository and a pinned tag or commit SHA.
+      - uses: <owner>/thirdsentry@<ref>
+        with:
+          fail-on: high
+        env:
+          # Alert credentials come from repository secrets; never commit them.
+          THIRDSENTRY_SLACK_WEBHOOK: ${{ secrets.THIRDSENTRY_SLACK_WEBHOOK }}
+          THIRDSENTRY_REPORT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
