@@ -16,14 +16,14 @@ let cleanup: () => Promise<void> = () => Promise.resolve();
 async function cli(...args: string[]): Promise<number> {
   const spy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
   try {
-    return await main(['node', 'scriptdrift', '--config', join(dir, 'scriptdrift.yml'), ...args]);
+    return await main(['node', 'thirdsentry', '--config', join(dir, 'thirdsentry.yml'), ...args]);
   } finally {
     spy.mockRestore();
     process.exitCode = undefined;
   }
 }
 
-const readJson = async <T>(...parts: string[]): Promise<T> => JSON.parse(await readFile(join(dir, '.scriptdrift', ...parts), 'utf8')) as T;
+const readJson = async <T>(...parts: string[]): Promise<T> => JSON.parse(await readFile(join(dir, '.thirdsentry', ...parts), 'utf8')) as T;
 
 beforeAll(async () => {
   await server.start();
@@ -59,7 +59,7 @@ describe('security analysis end to end', () => {
     expect(['high', 'critical']).toContain(pay?.severity);
     expect(pay?.status).toBe('new');
     const ids = pay?.signals.map((s) => s.id) ?? [];
-    expect(ids).toEqual(expect.arrayContaining(['hash-changed-third-party', 'sensitive-page', 'new-rule:SD-SENSITIVE-FIELD-ACCESS', 'new-rule:SD-EXFIL-COMBINATION']));
+    expect(ids).toEqual(expect.arrayContaining(['hash-changed-third-party', 'sensitive-page', 'new-rule:TS-SENSITIVE-FIELD-ACCESS', 'new-rule:TS-EXFIL-COMBINATION']));
     expect(pay?.reason).not.toMatch(/malware/i);
   }, 120_000);
 

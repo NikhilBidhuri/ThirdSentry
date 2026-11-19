@@ -54,5 +54,5 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - run: docker build -t scriptdrift:ci .
-      - run: docker run --rm scriptdrift:ci --version
+      - run: docker build -t thirdsentry:ci .
+      - run: docker run --rm thirdsentry:ci --version

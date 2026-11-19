@@ -4,7 +4,7 @@ import type { BrowserProfile, EngineName } from './browser-profiles.js';
 
 /**
  * Launches browsers with hardened defaults:
- *  - all traffic is forced through the ScriptDrift egress proxy (including
+ *  - all traffic is forced through the ThirdSentry egress proxy (including
  *    loopback, which Playwright routes through the proxy for Chromium),
  *  - QUIC/HTTP3 and non-proxied WebRTC UDP are disabled so traffic cannot
  *    bypass the proxy,

@@ -1,13 +1,13 @@
 # GitHub Actions
 
-ScriptDrift ships a composite action (`action.yml` at the repository root) that installs ScriptDrift and the browser, runs a scan, uploads SARIF to GitHub Code Scanning, uploads the reports as an artifact and fails the job when findings exceed your threshold.
+ThirdSentry ships a composite action (`action.yml` at the repository root) that installs ThirdSentry and the browser, runs a scan, uploads SARIF to GitHub Code Scanning, uploads the reports as an artifact and fails the job when findings exceed your threshold.
 
 ## Example workflow
 
-Put `scriptdrift.yml` and the reviewed baselines (`.scriptdrift/baselines/`) in a repository, then add `.github/workflows/scriptdrift.yml` (also in `examples/github-workflow.yml`):
+Put `thirdsentry.yml` and the reviewed baselines (`.thirdsentry/baselines/`) in a repository, then add `.github/workflows/thirdsentry.yml` (also in `examples/github-workflow.yml`):
 
 ```yaml
-name: ScriptDrift Security Monitoring
+name: ThirdSentry Security Monitoring
 
 on:
   schedule:
@@ -15,14 +15,14 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [scriptdrift.yml, .scriptdrift/baselines/**]
+    paths: [thirdsentry.yml, .thirdsentry/baselines/**]
 
 permissions:
   contents: read
   security-events: write
 
 concurrency:
-  group: scriptdrift
+  group: thirdsentry
   cancel-in-progress: false
 
 jobs:
@@ -36,26 +36,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: <owner>/scriptdrift@<ref>      # pin a tag or, better, a commit SHA
+      - uses: <owner>/thirdsentry@<ref>      # pin a tag or, better, a commit SHA
         with:
           fail-on: high
         env:
-          SCRIPTDRIFT_SLACK_WEBHOOK: ${{ secrets.SCRIPTDRIFT_SLACK_WEBHOOK }}
-          SCRIPTDRIFT_REPORT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          THIRDSENTRY_SLACK_WEBHOOK: ${{ secrets.THIRDSENTRY_SLACK_WEBHOOK }}
+          THIRDSENTRY_REPORT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 ```
 
 ## Inputs
 
 | Input | Default | Description |
 | --- | --- | --- |
-| `config` | `scriptdrift.yml` | Configuration path (relative to `working-directory`). |
-| `working-directory` | `.` | Directory with the configuration and `.scriptdrift/baselines`. |
+| `config` | `thirdsentry.yml` | Configuration path (relative to `working-directory`). |
+| `working-directory` | `.` | Directory with the configuration and `.thirdsentry/baselines`. |
 | `site` | all | Comma-separated sites to scan. |
 | `fail-on` | config `failOn` | Fail the job at this severity (`none` never fails on findings). |
 | `formats` | `json,sarif,html` | Report formats. |
 | `browsers` | `chromium` | Browsers to install, e.g. `chromium firefox webkit`. |
 | `upload-sarif` | `true` | Upload to Code Scanning (needs `security-events: write`). |
-| `sarif-category` | `scriptdrift` | Code Scanning category. |
+| `sarif-category` | `thirdsentry` | Code Scanning category. |
 | `upload-artifact` | `true` | Upload `report.json`, `report.sarif`, `report.html` as an artifact. |
 | `artifact-retention-days` | `14` | Artifact retention. |
 | `alerts` | `true` | Send alerts for enabled channels. |
@@ -65,8 +65,8 @@ Outputs: `exit-code` and `report-dir`.
 ## Security notes
 
 - **Least privilege.** The workflow needs `contents: read` and, for SARIF upload, `security-events: write`. Add `issues: write` only if `alerts.github` is enabled. Use `persist-credentials: false` on checkout so the Git token is not left on disk for the scan.
-- **Secrets.** Pass alert credentials as `env` on the action step from repository secrets. ScriptDrift resolves them only in the alert publisher; the browser worker runs with an allowlisted environment that excludes them and `GITHUB_TOKEN`. GitHub masks secret values in logs, and ScriptDrift redacts them from its own error messages.
-- **No automatic approval or commits.** The action never commits anything and never updates baselines. Approve changes locally with `scriptdrift baseline`, review the diff of `baseline.json` and merge it through a pull request.
+- **Secrets.** Pass alert credentials as `env` on the action step from repository secrets. ThirdSentry resolves them only in the alert publisher; the browser worker runs with an allowlisted environment that excludes them and `GITHUB_TOKEN`. GitHub masks secret values in logs, and ThirdSentry redacts them from its own error messages.
+- **No automatic approval or commits.** The action never commits anything and never updates baselines. Approve changes locally with `thirdsentry baseline`, review the diff of `baseline.json` and merge it through a pull request.
 - **What is uploaded.** The artifact contains only `report.json`, `report.sarif` and `report.html`. Raw scan results and state stay on the ephemeral runner. Reports contain URLs and metadata of third-party resources (sensitive query values redacted) but no script bodies. Restrict artifact access accordingly in public repositories.
 - **Chromium sandbox.** Ubuntu 23.10+ runners restrict unprivileged user namespaces, which Chromium's sandbox needs. The action relaxes this setting on the ephemeral runner (`kernel.apparmor_restrict_unprivileged_userns=0`) so that the sandbox can stay enabled.
 - **Pin the action.** Reference the action by commit SHA rather than a moving tag.
@@ -80,7 +80,7 @@ Outputs: `exit-code` and `report-dir`.
 
 ## Manual runs
 
-`workflow_dispatch` adds a "Run workflow" button. Scans triggered by `push` to `scriptdrift.yml` or the baselines verify that a configuration or baseline change is consistent.
+`workflow_dispatch` adds a "Run workflow" button. Scans triggered by `push` to `thirdsentry.yml` or the baselines verify that a configuration or baseline change is consistent.
 
 ## Testing status
 

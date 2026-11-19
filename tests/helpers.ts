@@ -5,7 +5,7 @@ import { stringify } from 'yaml';
 import { loadConfig, type ResolvedConfig } from '../src/config/loader.js';
 import { ALLOWED_TEST_HOSTS, FIXTURE_HOSTS } from './fixtures/server.js';
 
-/** Create a temporary project directory with a scriptdrift.yml for the fixture server. */
+/** Create a temporary project directory with a thirdsentry.yml for the fixture server. */
 export async function makeProject(port: number, overrides: Record<string, unknown> = {}): Promise<{ dir: string; resolved: ResolvedConfig; cleanup: () => Promise<void> }> {
   const base = join(process.cwd(), 'tests', '.tmp');
   await mkdir(base, { recursive: true });
@@ -31,13 +31,13 @@ export async function makeProject(port: number, overrides: Record<string, unknow
     },
     ...overrides,
   };
-  await writeFile(join(dir, 'scriptdrift.yml'), stringify(config));
+  await writeFile(join(dir, 'thirdsentry.yml'), stringify(config));
   const resolved = await loadConfig({ cwd: dir });
   return { dir, resolved, cleanup: () => rm(dir, { recursive: true, force: true }) };
 }
 
 export async function tempDir(prefix = 'tmp-'): Promise<string> {
-  const base = join(tmpdir(), 'scriptdrift-tests');
+  const base = join(tmpdir(), 'thirdsentry-tests');
   await mkdir(base, { recursive: true });
   return mkdtemp(join(base, prefix));
 }

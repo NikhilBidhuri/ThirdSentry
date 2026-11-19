@@ -25,7 +25,7 @@ export interface CspLintTarget {
 }
 
 export interface CspLintResult {
-  readonly kind: 'scriptdrift-csp-lint';
+  readonly kind: 'thirdsentry-csp-lint';
   readonly generatedAt: string;
   readonly targets: readonly CspLintTarget[];
   readonly counts: { readonly error: number; readonly warning: number; readonly info: number };
@@ -81,5 +81,5 @@ export async function lintUrl(url: string, policy: NetworkPolicy, options: { tim
 export function buildLintResult(targets: readonly CspLintTarget[], now = new Date()): CspLintResult {
   const counts = { error: 0, warning: 0, info: 0 };
   for (const t of targets) for (const f of t.findings) counts[f.level]++;
-  return { kind: 'scriptdrift-csp-lint', generatedAt: now.toISOString(), targets, counts, disclaimer: CSP_DISCLAIMER };
+  return { kind: 'thirdsentry-csp-lint', generatedAt: now.toISOString(), targets, counts, disclaimer: CSP_DISCLAIMER };
 }

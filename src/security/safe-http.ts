@@ -47,7 +47,7 @@ function policyLookup(policy: NetworkPolicy, port: number): LookupFunction {
     policy.resolveDestination(hostname, port).then(
       (decision) => {
         if (!decision.allowed) {
-          callback(Object.assign(new Error(`Blocked by network policy: ${decision.reason}`), { code: 'ESCRIPTDRIFTBLOCKED' }), '', 0);
+          callback(Object.assign(new Error(`Blocked by network policy: ${decision.reason}`), { code: 'ETHIRDSENTRYBLOCKED' }), '', 0);
           return;
         }
         if ((options as { all?: boolean }).all) {
@@ -69,7 +69,7 @@ function requestOnce(url: URL, policy: NetworkPolicy, options: Required<Pick<Saf
       url,
       {
         method: 'GET',
-        headers: { 'user-agent': `ScriptDrift/${toolVersion()} (csp-lint)`, accept: 'text/html,*/*;q=0.8', ...options.headers },
+        headers: { 'user-agent': `ThirdSentry/${toolVersion()} (csp-lint)`, accept: 'text/html,*/*;q=0.8', ...options.headers },
         lookup: policyLookup(policy, port),
         timeout: options.timeoutMs,
         agent: false,
@@ -100,7 +100,7 @@ function requestOnce(url: URL, policy: NetworkPolicy, options: Required<Pick<Saf
       },
     );
     req.on('timeout', () => req.destroy(new SafeFetchError(`Request timed out after ${options.timeoutMs}ms`)));
-    req.on('error', (e: NodeJS.ErrnoException) => reject(e.code === 'ESCRIPTDRIFTBLOCKED' ? new SafeFetchError(e.message) : e));
+    req.on('error', (e: NodeJS.ErrnoException) => reject(e.code === 'ETHIRDSENTRYBLOCKED' ? new SafeFetchError(e.message) : e));
     req.end();
   });
 }

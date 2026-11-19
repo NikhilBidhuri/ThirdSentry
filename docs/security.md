@@ -1,10 +1,10 @@
 # Security model
 
-ScriptDrift visits websites and runs their JavaScript in a real browser. Those websites, and the third parties they load, are **not trusted**: monitoring for compromised scripts means deliberately running potentially compromised code. This document describes the threat model, the trust boundaries and the protections in place, including their limits.
+ThirdSentry visits websites and runs their JavaScript in a real browser. Those websites, and the third parties they load, are **not trusted**: monitoring for compromised scripts means deliberately running potentially compromised code. This document describes the threat model, the trust boundaries and the protections in place, including their limits.
 
 ## Assets to protect
 
-1. **Credentials**: alert credentials (Slack webhook URLs, SMTP passwords, webhook signing secrets, GitHub tokens), Git credentials and cloud credentials on the machine running ScriptDrift.
+1. **Credentials**: alert credentials (Slack webhook URLs, SMTP passwords, webhook signing secrets, GitHub tokens), Git credentials and cloud credentials on the machine running ThirdSentry.
 2. **Internal network**: services reachable from the scanner host (databases, admin panels, cloud metadata endpoints, other containers).
 3. **Integrity of approved baselines**: an attacker who could edit the baseline could make a malicious script look "approved".
 4. **Integrity of findings and alerts**: results must not be forgeable by the scanned page.
@@ -26,7 +26,7 @@ ScriptDrift visits websites and runs their JavaScript in a real browser. Those w
 
 ```
  ┌──────────────────────────── trusted ─────────────────────────────┐
- │  Coordinator (scriptdrift scan)                                    │
+ │  Coordinator (thirdsentry scan)                                    │
  │   - loads config, validates URLs, pre-flight DNS checks            │
  │   - spawns the browser worker with a scrubbed environment          │
  │   - validates worker evidence (schema + size limits)               │
@@ -51,7 +51,7 @@ ScriptDrift visits websites and runs their JavaScript in a real browser. Those w
 
 ### 1. Egress proxy: per-connection SSRF protection
 
-All browser traffic (HTTP, HTTPS, WebSocket) is forced through ScriptDrift's egress proxy:
+All browser traffic (HTTP, HTTPS, WebSocket) is forced through ThirdSentry's egress proxy:
 
 - For **every connection**, including every redirect hop and every subresource, the proxy resolves the hostname **once**, checks **every** returned address, and then opens the TCP connection to **that validated address**. The browser never resolves names itself for proxied traffic. A DNS answer that changes between check and use (DNS rebinding, TOCTOU) therefore cannot redirect the connection.
 - If any resolved address is disallowed, the destination is refused. This prevents mixed public and private record sets.
@@ -90,7 +90,7 @@ Everything produced by the browser worker is validated against a strict schema w
 
 ### 5. Baselines are never modified by scans
 
-Scans only write to `reports/`, `state/` and (optionally) `cache/`. Baselines change only through the explicit `scriptdrift baseline` command, which shows a summary and asks for confirmation. Nothing is approved automatically. In CI, commit baseline changes through code review.
+Scans only write to `reports/`, `state/` and (optionally) `cache/`. Baselines change only through the explicit `thirdsentry baseline` command, which shows a summary and asks for confirmation. Nothing is approved automatically. In CI, commit baseline changes through code review.
 
 ### 6. Alert credentials
 

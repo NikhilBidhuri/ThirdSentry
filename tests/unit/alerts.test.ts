@@ -52,7 +52,7 @@ function findings(): Finding[] {
 function report(fs: Finding[]): AnalysisReport {
   return {
     schemaVersion: 1,
-    kind: 'scriptdrift-report',
+    kind: 'thirdsentry-report',
     generatedAt: '2026-01-01T00:00:00.000Z',
     toolVersion: '0.1.0',
     scanId: 'scan-1',
@@ -73,7 +73,7 @@ function report(fs: Finding[]): AnalysisReport {
 
 async function project(alerts: Record<string, unknown>): Promise<ResolvedConfig> {
   const dir = await tempDir('alerts-');
-  await writeFile(join(dir, 'scriptdrift.yml'), stringify({ version: 1, sites: [{ name: 'shop', url: 'https://shop.example/' }], alerts: { retries: 1, timeoutMs: 3000, ...alerts } }));
+  await writeFile(join(dir, 'thirdsentry.yml'), stringify({ version: 1, sites: [{ name: 'shop', url: 'https://shop.example/' }], alerts: { retries: 1, timeoutMs: 3000, ...alerts } }));
   return loadConfig({ cwd: dir });
 }
 
@@ -87,7 +87,7 @@ describe('alert payload', () => {
     const modified = payload.findings.find((f) => f.title.includes('changed'));
     expect(modified?.previousHash).toMatch(/^[0-9a-f]{64}$/);
     expect(modified?.why).toMatch(/score \d+/);
-    expect(modified?.evidence.find((e) => e.label === 'Behaviour matches')?.value).toContain('SD-SENSITIVE-FIELD-ACCESS');
+    expect(modified?.evidence.find((e) => e.label === 'Behaviour matches')?.value).toContain('TS-SENSITIVE-FIELD-ACCESS');
   });
 
   it('selects only unsuppressed findings above the threshold that were not alerted yet', () => {
@@ -128,11 +128,11 @@ describe('alert channels against local mock servers', () => {
     const result = await sendAlerts(resolved, report(findings()), { env: { HOOK_URL: http.url('/hook'), HOOK_SECRET: 'topsecret' }, retryDelayMs: 1 });
     expect(result.results).toEqual([expect.objectContaining({ channel: 'webhook', ok: true })]);
     const req = http.requests[0];
-    const ts = Number(req?.headers['x-scriptdrift-timestamp']);
+    const ts = Number(req?.headers['x-thirdsentry-timestamp']);
     const expected = `sha256=${createHmac('sha256', 'topsecret').update(`${ts}.${req?.body ?? ''}`).digest('hex')}`;
-    expect(req?.headers['x-scriptdrift-signature']).toBe(expected);
+    expect(req?.headers['x-thirdsentry-signature']).toBe(expected);
     expect(signPayload(req?.body ?? '', 'topsecret', ts)).toBe(expected);
-    expect(JSON.parse(req?.body ?? '{}')).toMatchObject({ kind: 'scriptdrift-alert', scanId: 'scan-1' });
+    expect(JSON.parse(req?.body ?? '{}')).toMatchObject({ kind: 'thirdsentry-alert', scanId: 'scan-1' });
   });
 
   it('does not alert twice for the same finding', async () => {
@@ -164,7 +164,7 @@ describe('alert channels against local mock servers', () => {
     const resolved = await project({ minSeverity: 'info', slack: { enabled: true } });
     const result = await sendAlerts(resolved, report(findings()), { env: {}, retryDelayMs: 1 });
     expect(result.results[0]).toMatchObject({ channel: 'slack', ok: false });
-    expect(result.results[0]?.error).toMatch(/SCRIPTDRIFT_SLACK_WEBHOOK/);
+    expect(result.results[0]?.error).toMatch(/THIRDSENTRY_SLACK_WEBHOOK/);
   });
 
   it('creates GitHub issues once per finding', async () => {
@@ -179,7 +179,7 @@ describe('alert channels against local mock servers', () => {
     const first = await sendAlerts(resolved, report(fs), { env: { GH_TOKEN: 'ghp_test' }, retryDelayMs: 1 });
     expect(first.results[0]).toMatchObject({ channel: 'github', ok: true, delivered: fs.length });
     expect(created).toHaveLength(fs.length);
-    expect(created[0]).toMatch(/<!-- scriptdrift-finding: SD-[0-9a-f]{12} -->/);
+    expect(created[0]).toMatch(/<!-- thirdsentry-finding: TS-[0-9a-f]{12} -->/);
     const post = http.requests.find((r) => r.method === 'POST');
     expect(post?.url).toBe('/repos/acme/shop/issues');
     expect(post?.headers.authorization).toBe('Bearer ghp_test');
@@ -192,14 +192,14 @@ describe('alert channels against local mock servers', () => {
   });
 
   it('sends e-mail over SMTP and refuses to send without TLS when TLS is required', async () => {
-    const env = { SMTP_HOST: '127.0.0.1', SMTP_PORT: String(smtp.port), SMTP_FROM: 'scriptdrift@example.com', SMTP_TO: 'sec@example.com,dev@example.com' };
+    const env = { SMTP_HOST: '127.0.0.1', SMTP_PORT: String(smtp.port), SMTP_FROM: 'thirdsentry@example.com', SMTP_TO: 'sec@example.com,dev@example.com' };
     const email = { enabled: true, host: '${SMTP_HOST}', port: '${SMTP_PORT}', from: '${SMTP_FROM}', to: '${SMTP_TO}' };
     const plain = await project({ minSeverity: 'info', email: { ...email, requireTLS: false } });
     const sent = await sendAlerts(plain, report(findings()), { env, retryDelayMs: 1 });
     expect(sent.results[0]).toMatchObject({ channel: 'email', ok: true });
     expect(smtp.messages).toHaveLength(1);
     expect(smtp.messages[0]?.to).toHaveLength(2);
-    expect(smtp.messages[0]?.data).toMatch(/Subject: \[ScriptDrift\]/);
+    expect(smtp.messages[0]?.data).toMatch(/Subject: \[ThirdSentry\]/);
 
     const strict = await project({ minSeverity: 'info', email });
     const refused = await sendAlerts(strict, report(findings()), { env, retryDelayMs: 1 });

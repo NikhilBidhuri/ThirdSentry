@@ -21,7 +21,7 @@ afterAll(async () => {
 
 async function scanPages(pages: string[], scanOverrides: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) {
   const project = await makeProject(server.port, extra);
-  const cfgPath = join(project.dir, 'scriptdrift.yml');
+  const cfgPath = join(project.dir, 'thirdsentry.yml');
   const { parse } = await import('yaml');
   const { readFile } = await import('node:fs/promises');
   const cfg = parse(await readFile(cfgPath, 'utf8')) as { sites: Array<Record<string, unknown>>; defaults: { scan: Record<string, unknown> } };
@@ -79,7 +79,7 @@ describe('scanner edge cases', () => {
     const project = await makeProject(server.port);
     try {
       await writeFile(
-        join(project.dir, 'scriptdrift.yml'),
+        join(project.dir, 'thirdsentry.yml'),
         stringify({ version: 1, sites: [{ name: 'local', url: `http://127.0.0.1:${server.port}/` }], security: { network: { allowedPorts: [server.port] } } }),
       );
       await expect(loadConfig({ cwd: project.dir })).rejects.toBeInstanceOf(ConfigError);
@@ -89,7 +89,7 @@ describe('scanner edge cases', () => {
   });
 
   it('runs the browser in an isolated worker process with a scrubbed environment', async () => {
-    process.env.SCRIPTDRIFT_SLACK_WEBHOOK = 'https://hooks.example/secret-should-not-leak';
+    process.env.THIRDSENTRY_SLACK_WEBHOOK = 'https://hooks.example/secret-should-not-leak';
     try {
       const result = await scanPages(['/checkout'], {}, {
         security: {
@@ -105,7 +105,7 @@ describe('scanner edge cases', () => {
       expect(result.status).toBe('complete');
       expect(result.sites[0]?.resources.some((r) => r.finalUrl?.endsWith('/pay.js'))).toBe(true);
     } finally {
-      delete process.env.SCRIPTDRIFT_SLACK_WEBHOOK;
+      delete process.env.THIRDSENTRY_SLACK_WEBHOOK;
     }
   }, 90_000);
 });

@@ -6,10 +6,10 @@ coverage/
 .env.*
 !.env.example
 
-# ScriptDrift runtime output (never commit scan evidence by accident)
-.scriptdrift/reports/
-.scriptdrift/cache/
-.scriptdrift/state/
-.scriptdrift/evidence/
+# ThirdSentry runtime output (never commit scan evidence by accident)
+.thirdsentry/reports/
+.thirdsentry/cache/
+.thirdsentry/state/
+.thirdsentry/evidence/
 # Test scratch
 tests/.tmp/

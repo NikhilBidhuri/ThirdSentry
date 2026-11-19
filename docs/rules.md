@@ -1,6 +1,6 @@
 # Detection rules and risk scoring
 
-ScriptDrift analyses every captured script statically, using Babel to parse it into a syntax tree (it is never executed for analysis). Rules look for **behaviour worth reviewing**. None of them is proof of malicious intent: analytics libraries read cookies, chat widgets open WebSockets, payment SDKs touch card fields. What matters is **what changed**, **where** and **in which combination**.
+ThirdSentry analyses every captured script statically, using Babel to parse it into a syntax tree (it is never executed for analysis). Rules look for **behaviour worth reviewing**. None of them is proof of malicious intent: analytics libraries read cookies, chat widgets open WebSockets, payment SDKs touch card fields. What matters is **what changed**, **where** and **in which combination**.
 
 ## How indicators become findings
 
@@ -15,25 +15,25 @@ Rule matches on unchanged, approved scripts never produce findings. They are vis
 
 | Rule | Name | Severity | Confidence | Default weight |
 | --- | --- | --- | --- | --- |
-| `SD-EVAL` | eval() usage | medium | high | 12 |
-| `SD-NEW-FUNCTION` | Function constructor | medium | high | 12 |
-| `SD-STRING-TIMER` | String passed to setTimeout/setInterval | low | high | 6 |
-| `SD-SCRIPT-INJECTION` | Dynamic script injection | low | high | 6 |
-| `SD-REMOTE-SCRIPT-LOAD` | Loads script from a remote URL | medium | medium | 12 |
-| `SD-COOKIE-ACCESS` | document.cookie access | low | high | 6 |
-| `SD-WEB-STORAGE` | localStorage/sessionStorage access | info | high | 2 |
-| `SD-SENSITIVE-FIELD-ACCESS` | Accesses payment or password fields | high | medium | 22 |
-| `SD-FORM-FIELD-ACCESS` | Reads form fields | low | medium | 6 |
-| `SD-KEYSTROKE-CAPTURE` | Keystroke capture | medium | medium | 12 |
-| `SD-CLIPBOARD` | Clipboard access | medium | high | 12 |
-| `SD-BEACON` | navigator.sendBeacon | low | high | 6 |
-| `SD-WEBSOCKET` | WebSocket connection | low | high | 6 |
-| `SD-REMOTE-ENDPOINT` | Sends requests to absolute URLs | info | medium | 2 |
-| `SD-NETWORK-API-HOOK` | Overrides network or form APIs | medium | high | 12 |
-| `SD-OBFUSCATION` | Obfuscated or heavily encoded code | medium | medium | 12 |
-| `SD-EXFIL-COMBINATION` | Sensitive data access combined with data transmission | high | medium | 22 |
+| `TS-EVAL` | eval() usage | medium | high | 12 |
+| `TS-NEW-FUNCTION` | Function constructor | medium | high | 12 |
+| `TS-STRING-TIMER` | String passed to setTimeout/setInterval | low | high | 6 |
+| `TS-SCRIPT-INJECTION` | Dynamic script injection | low | high | 6 |
+| `TS-REMOTE-SCRIPT-LOAD` | Loads script from a remote URL | medium | medium | 12 |
+| `TS-COOKIE-ACCESS` | document.cookie access | low | high | 6 |
+| `TS-WEB-STORAGE` | localStorage/sessionStorage access | info | high | 2 |
+| `TS-SENSITIVE-FIELD-ACCESS` | Accesses payment or password fields | high | medium | 22 |
+| `TS-FORM-FIELD-ACCESS` | Reads form fields | low | medium | 6 |
+| `TS-KEYSTROKE-CAPTURE` | Keystroke capture | medium | medium | 12 |
+| `TS-CLIPBOARD` | Clipboard access | medium | high | 12 |
+| `TS-BEACON` | navigator.sendBeacon | low | high | 6 |
+| `TS-WEBSOCKET` | WebSocket connection | low | high | 6 |
+| `TS-REMOTE-ENDPOINT` | Sends requests to absolute URLs | info | medium | 2 |
+| `TS-NETWORK-API-HOOK` | Overrides network or form APIs | medium | high | 12 |
+| `TS-OBFUSCATION` | Obfuscated or heavily encoded code | medium | medium | 12 |
+| `TS-EXFIL-COMBINATION` | Sensitive data access combined with data transmission | high | medium | 22 |
 
-### SD-EVAL: eval() usage
+### TS-EVAL: eval() usage
 
 Code is executed from a string with eval().
 
@@ -41,7 +41,7 @@ Code is executed from a string with eval().
 - **How to investigate:** Find what string is passed to eval and where it comes from (a constant, a decoded blob, a network response?). Code fetched or decoded at runtime deserves close review.
 - **Common false positives:** Old libraries and some tag managers use eval for JSON parsing or template compilation.
 
-### SD-NEW-FUNCTION: Function constructor
+### TS-NEW-FUNCTION: Function constructor
 
 Code is compiled from a string with new Function() / Function().
 
@@ -49,7 +49,7 @@ Code is compiled from a string with new Function() / Function().
 - **How to investigate:** Check the arguments passed to the Function constructor and whether they are constant or derived from decoded or remote data.
 - **Common false positives:** Template engines and some polyfills (e.g. for globalThis detection: Function("return this")()) use it legitimately.
 
-### SD-STRING-TIMER: String passed to setTimeout/setInterval
+### TS-STRING-TIMER: String passed to setTimeout/setInterval
 
 A timer is given a string of code instead of a function.
 
@@ -57,7 +57,7 @@ A timer is given a string of code instead of a function.
 - **How to investigate:** Look at the string passed to the timer and where it is built.
 - **Common false positives:** Very old code sometimes uses string timers out of habit.
 
-### SD-SCRIPT-INJECTION: Dynamic script injection
+### TS-SCRIPT-INJECTION: Dynamic script injection
 
 The script creates <script> elements or writes script tags into the page.
 
@@ -65,7 +65,7 @@ The script creates <script> elements or writes script tags into the page.
 - **How to investigate:** Identify which scripts this code loads (they appear as runtime-injected resources in the scan) and whether they are expected.
 - **Common false positives:** Tag managers, analytics loaders and widget bootstrappers all inject scripts.
 
-### SD-REMOTE-SCRIPT-LOAD: Loads script from a remote URL
+### TS-REMOTE-SCRIPT-LOAD: Loads script from a remote URL
 
 The script loads further code from an absolute URL (script src, importScripts or import()).
 
@@ -73,7 +73,7 @@ The script loads further code from an absolute URL (script src, importScripts or
 - **How to investigate:** Check that the referenced host belongs to the expected vendor. Unknown or look-alike domains are a strong warning sign.
 - **Common false positives:** Vendor loaders typically fetch their main bundle from their own CDN.
 
-### SD-COOKIE-ACCESS: document.cookie access
+### TS-COOKIE-ACCESS: document.cookie access
 
 The script reads or writes cookies via document.cookie.
 
@@ -81,7 +81,7 @@ The script reads or writes cookies via document.cookie.
 - **How to investigate:** Check which cookies are read and whether their values are sent to another domain.
 - **Common false positives:** Analytics, consent management and A/B testing tools read and write their own cookies.
 
-### SD-WEB-STORAGE: localStorage/sessionStorage access
+### TS-WEB-STORAGE: localStorage/sessionStorage access
 
 The script uses Web Storage.
 
@@ -89,7 +89,7 @@ The script uses Web Storage.
 - **How to investigate:** Check which keys are read and whether they belong to this vendor.
 - **Common false positives:** Very common: analytics, consent and personalisation tools persist state this way.
 
-### SD-SENSITIVE-FIELD-ACCESS: Accesses payment or password fields
+### TS-SENSITIVE-FIELD-ACCESS: Accesses payment or password fields
 
 The script selects form fields whose names suggest passwords, card numbers, CVV or similar.
 
@@ -97,7 +97,7 @@ The script selects form fields whose names suggest passwords, card numbers, CVV 
 - **How to investigate:** Find out why this script needs these fields. Payment providers normally isolate card fields in their own iframe; a third-party script reading card fields on your page is highly unusual.
 - **Common false positives:** Your own checkout code, form validation libraries and payment SDKs that are designed to wrap card inputs.
 
-### SD-FORM-FIELD-ACCESS: Reads form fields
+### TS-FORM-FIELD-ACCESS: Reads form fields
 
 The script selects form inputs or listens to form submission.
 
@@ -105,7 +105,7 @@ The script selects form inputs or listens to form submission.
 - **How to investigate:** Check which fields are read and where their values go.
 - **Common false positives:** Form analytics, validation, address autocomplete and chat widgets read form fields.
 
-### SD-KEYSTROKE-CAPTURE: Keystroke capture
+### TS-KEYSTROKE-CAPTURE: Keystroke capture
 
 The script listens to keyboard or input events.
 
@@ -113,7 +113,7 @@ The script listens to keyboard or input events.
 - **How to investigate:** Check which element the listener is attached to (document-wide listeners are most concerning) and what is done with the captured keys.
 - **Common false positives:** Keyboard shortcuts, search-as-you-type, accessibility tools and input masking libraries.
 
-### SD-CLIPBOARD: Clipboard access
+### TS-CLIPBOARD: Clipboard access
 
 The script reads or writes the clipboard or listens to copy/paste events.
 
@@ -121,7 +121,7 @@ The script reads or writes the clipboard or listens to copy/paste events.
 - **How to investigate:** Check whether the script reads pasted data or replaces copied content.
 - **Common false positives:** "Copy to clipboard" buttons and rich-text editors.
 
-### SD-BEACON: navigator.sendBeacon
+### TS-BEACON: navigator.sendBeacon
 
 The script sends data with navigator.sendBeacon.
 
@@ -129,7 +129,7 @@ The script sends data with navigator.sendBeacon.
 - **How to investigate:** Check the destination URL and what data is sent.
 - **Common false positives:** Analytics and performance monitoring commonly use beacons.
 
-### SD-WEBSOCKET: WebSocket connection
+### TS-WEBSOCKET: WebSocket connection
 
 The script opens a WebSocket connection.
 
@@ -137,7 +137,7 @@ The script opens a WebSocket connection.
 - **How to investigate:** Check the WebSocket URL and whether it belongs to the expected vendor.
 - **Common false positives:** Chat widgets, live updates and collaboration tools.
 
-### SD-REMOTE-ENDPOINT: Sends requests to absolute URLs
+### TS-REMOTE-ENDPOINT: Sends requests to absolute URLs
 
 The script calls fetch/XMLHttpRequest or sets image URLs pointing at absolute remote endpoints.
 
@@ -145,7 +145,7 @@ The script calls fetch/XMLHttpRequest or sets image URLs pointing at absolute re
 - **How to investigate:** Compare the referenced hosts with the vendors you expect.
 - **Common false positives:** Almost every third-party script talks to its own backend.
 
-### SD-NETWORK-API-HOOK: Overrides network or form APIs
+### TS-NETWORK-API-HOOK: Overrides network or form APIs
 
 The script replaces fetch, XMLHttpRequest, sendBeacon, form submission or addEventListener.
 
@@ -153,7 +153,7 @@ The script replaces fetch, XMLHttpRequest, sendBeacon, form submission or addEve
 - **How to investigate:** Determine why the script needs to intercept other code's requests. Monitoring tools do this; so do skimmers.
 - **Common false positives:** Real-user-monitoring, error tracking and some analytics SDKs instrument fetch/XHR.
 
-### SD-OBFUSCATION: Obfuscated or heavily encoded code
+### TS-OBFUSCATION: Obfuscated or heavily encoded code
 
 The script shows several signs of deliberate obfuscation.
 
@@ -161,7 +161,7 @@ The script shows several signs of deliberate obfuscation.
 - **How to investigate:** Try a deobfuscator or beautifier on the retained content, look for decoded URLs and eval/Function usage, and ask the vendor why the code is obfuscated.
 - **Common false positives:** Some commercial anti-fraud, bot-detection and licensing scripts are obfuscated on purpose.
 
-### SD-EXFIL-COMBINATION: Sensitive data access combined with data transmission
+### TS-EXFIL-COMBINATION: Sensitive data access combined with data transmission
 
 The same script both reads sensitive input (form fields, keystrokes, clipboard) and sends data to remote endpoints.
 
@@ -181,11 +181,11 @@ The same script both reads sensitive input (form fields, keystrokes, clipboard) 
 
 ```yaml
 rules:
-  SD-WEB-STORAGE:
+  TS-WEB-STORAGE:
     enabled: false              # turn a rule off everywhere
-  SD-EVAL:
+  TS-EVAL:
     severity: high              # change severity (and therefore default weight)
-  SD-KEYSTROKE-CAPTURE:
+  TS-KEYSTROKE-CAPTURE:
     weight: 25                  # set the risk weight directly
     ignoreResources:            # resources (URL or identity globs) this rule ignores
       - https://widget.chat-vendor.example/*
@@ -208,7 +208,7 @@ Every finding has a **score** (0-100), a **severity** derived from the score, a 
 The score is the sum of the weights of the signals that apply, capped at 100. Each finding lists its signals, so the rating is always explainable. Example:
 
 ```
-HIGH confidence high  Third-party script changed on a sensitive page  SD-3f1c0a9b2e7d
+HIGH confidence high  Third-party script changed on a sensitive page  TS-3f1c0a9b2e7d
     https://js.payments.example/v3/
     why: +25 content of an approved third-party script changed; +15 observed on a page marked as sensitive;
          +22 new behaviour: accesses payment or password fields; +25 the changed script itself references
@@ -281,11 +281,11 @@ Suppressions live in the configuration, require a reason, and can expire:
 ```yaml
 suppressions:
   # Remove one rule's contribution for one vendor (the change itself is still reported)
-  - rule: SD-KEYSTROKE-CAPTURE
+  - rule: TS-KEYSTROKE-CAPTURE
     resource: https://widget.chat-vendor.example/*
     reason: Chat widget listens to keystrokes for typing indicators (reviewed 2026-11-02)
   # Accept a specific finding until a date
-  - id: SD-3f1c0a9b2e7d
+  - id: TS-3f1c0a9b2e7d
     reason: Vendor confirmed release 4.2, ticket SEC-118
     expires: 2026-12-31
   # Ignore all new hosts under one vendor
@@ -300,4 +300,4 @@ suppressions:
 
 ## Repeated findings
 
-Finding IDs are fingerprints of the site, change kind, resource and current content hash. The same unchanged problem keeps the same ID across scans and is marked `recurring` after its first appearance (`new`). If the script changes again, the ID changes and the finding is `new` again. Alerts use this to avoid repeating themselves (see [alerts.md](alerts.md)). The state is kept in `.scriptdrift/state/findings.json`.
+Finding IDs are fingerprints of the site, change kind, resource and current content hash. The same unchanged problem keeps the same ID across scans and is marked `recurring` after its first appearance (`new`). If the script changes again, the ID changes and the finding is `new` again. Alerts use this to avoid repeating themselves (see [alerts.md](alerts.md)). The state is kept in `.thirdsentry/state/findings.json`.

@@ -15,7 +15,7 @@
  * Kept as a plain string so test/build tooling cannot inject helpers into it.
  */
 
-export const REPORT_BINDING = '__scriptdriftReport';
+export const REPORT_BINDING = '__thirdsentryReport';
 
 export interface InitScriptOptions {
   readonly maxInlineChars: number;
@@ -28,8 +28,8 @@ export function buildInitScript(options: InitScriptOptions): string {
   'use strict';
   const OPTS = ${JSON.stringify(options)};
   const BINDING = ${JSON.stringify(REPORT_BINDING)};
-  if (window.__scriptdriftInstalled) return;
-  try { Object.defineProperty(window, '__scriptdriftInstalled', { value: true, enumerable: false }); } catch (e) {}
+  if (window.__thirdsentryInstalled) return;
+  try { Object.defineProperty(window, '__thirdsentryInstalled', { value: true, enumerable: false }); } catch (e) {}
 
   const W = window;
   const getBinding = () => { try { const fn = W[BINDING]; return typeof fn === 'function' ? fn : null; } catch (e) { return null; } };

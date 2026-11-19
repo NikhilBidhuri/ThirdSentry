@@ -77,7 +77,7 @@ function isAssignmentTarget(path: NodePath): boolean {
 
 export const RULES: readonly Rule[] = [
   {
-    id: 'SD-EVAL',
+    id: 'TS-EVAL',
     name: 'eval() usage',
     description: 'Code is executed from a string with eval().',
     severity: 'medium',
@@ -89,12 +89,12 @@ export const RULES: readonly Rule[] = [
     visitors: {
       CallExpression(path, state) {
         const name = calleeName(path.node);
-        if ((name === 'eval' && isGlobal(path, 'eval')) || name === 'window.eval') state.report('SD-EVAL', path.node);
+        if ((name === 'eval' && isGlobal(path, 'eval')) || name === 'window.eval') state.report('TS-EVAL', path.node);
       },
     },
   },
   {
-    id: 'SD-NEW-FUNCTION',
+    id: 'TS-NEW-FUNCTION',
     name: 'Function constructor',
     description: 'Code is compiled from a string with new Function() / Function().',
     severity: 'medium',
@@ -105,7 +105,7 @@ export const RULES: readonly Rule[] = [
     falsePositives: 'Template engines and some polyfills (e.g. for globalThis detection: Function("return this")()) use it legitimately.',
     visitors: {
       NewExpression(path, state) {
-        if (calleeName(path.node) === 'Function' && isGlobal(path, 'Function')) state.report('SD-NEW-FUNCTION', path.node);
+        if (calleeName(path.node) === 'Function' && isGlobal(path, 'Function')) state.report('TS-NEW-FUNCTION', path.node);
       },
       CallExpression(path, state) {
         const n = path.node;
@@ -117,12 +117,12 @@ export const RULES: readonly Rule[] = [
           propertyName(n.callee) === 'constructor' &&
           n.callee.object.type === 'MemberExpression' &&
           propertyName(n.callee.object) === 'constructor';
-        if ((name === 'Function' && isGlobal(path, 'Function')) || gadget) state.report('SD-NEW-FUNCTION', n);
+        if ((name === 'Function' && isGlobal(path, 'Function')) || gadget) state.report('TS-NEW-FUNCTION', n);
       },
     },
   },
   {
-    id: 'SD-STRING-TIMER',
+    id: 'TS-STRING-TIMER',
     name: 'String passed to setTimeout/setInterval',
     description: 'A timer is given a string of code instead of a function.',
     severity: 'low',
@@ -134,12 +134,12 @@ export const RULES: readonly Rule[] = [
     visitors: {
       CallExpression(path, state) {
         const name = lastSegment(calleeName(path.node));
-        if ((name === 'setTimeout' || name === 'setInterval') && isStringish(firstArg(path))) state.report('SD-STRING-TIMER', path.node);
+        if ((name === 'setTimeout' || name === 'setInterval') && isStringish(firstArg(path))) state.report('TS-STRING-TIMER', path.node);
       },
     },
   },
   {
-    id: 'SD-SCRIPT-INJECTION',
+    id: 'TS-SCRIPT-INJECTION',
     name: 'Dynamic script injection',
     description: 'The script creates <script> elements or writes script tags into the page.',
     severity: 'low',
@@ -154,19 +154,19 @@ export const RULES: readonly Rule[] = [
         const last = lastSegment(name);
         if (last === 'createElement' || last === 'createElementNS') {
           const arg = staticString(nthArg(path, last === 'createElementNS' ? 1 : 0));
-          if (arg?.toLowerCase() === 'script') state.report('SD-SCRIPT-INJECTION', path.node);
+          if (arg?.toLowerCase() === 'script') state.report('TS-SCRIPT-INJECTION', path.node);
         } else if (name === 'document.write' || name === 'document.writeln') {
           const prefix = path.node.type === 'CallExpression' ? path.node.arguments.map((a) => (a.type === 'SpreadElement' || a.type === 'ArgumentPlaceholder' ? '' : (stringPrefix(a) ?? ''))).join('') : '';
-          if (/<script/i.test(prefix)) state.report('SD-SCRIPT-INJECTION', path.node, 'document.write');
+          if (/<script/i.test(prefix)) state.report('TS-SCRIPT-INJECTION', path.node, 'document.write');
         } else if (last === 'insertAdjacentHTML' || last === 'createContextualFragment') {
           const html = stringPrefix(nthArg(path, last === 'insertAdjacentHTML' ? 1 : 0));
-          if (html && /<script/i.test(html)) state.report('SD-SCRIPT-INJECTION', path.node, last);
+          if (html && /<script/i.test(html)) state.report('TS-SCRIPT-INJECTION', path.node, last);
         }
       },
     },
   },
   {
-    id: 'SD-REMOTE-SCRIPT-LOAD',
+    id: 'TS-REMOTE-SCRIPT-LOAD',
     name: 'Loads script from a remote URL',
     description: 'The script loads further code from an absolute URL (script src, importScripts or import()).',
     severity: 'medium',
@@ -183,7 +183,7 @@ export const RULES: readonly Rule[] = [
         if (elementKind(path as unknown as ScopedPath, n.left.object) !== 'script') return;
         const host = urlHost(stringPrefix(n.right));
         if (host) {
-          state.report('SD-REMOTE-SCRIPT-LOAD', n, host);
+          state.report('TS-REMOTE-SCRIPT-LOAD', n, host);
           state.hosts.add(host);
         }
       },
@@ -194,7 +194,7 @@ export const RULES: readonly Rule[] = [
           const target = name === 'importScripts' ? firstArg(path) : nthArg(path, 1);
           const host = urlHost(stringPrefix(target));
           if (host) {
-            state.report('SD-REMOTE-SCRIPT-LOAD', n, host);
+            state.report('TS-REMOTE-SCRIPT-LOAD', n, host);
             state.hosts.add(host);
           }
         }
@@ -204,14 +204,14 @@ export const RULES: readonly Rule[] = [
         if (n.type !== 'ImportExpression') return;
         const host = urlHost(stringPrefix(n.source));
         if (host) {
-          state.report('SD-REMOTE-SCRIPT-LOAD', n, host);
+          state.report('TS-REMOTE-SCRIPT-LOAD', n, host);
           state.hosts.add(host);
         }
       },
     },
   },
   {
-    id: 'SD-COOKIE-ACCESS',
+    id: 'TS-COOKIE-ACCESS',
     name: 'document.cookie access',
     description: 'The script reads or writes cookies via document.cookie.',
     severity: 'low',
@@ -222,12 +222,12 @@ export const RULES: readonly Rule[] = [
     falsePositives: 'Analytics, consent management and A/B testing tools read and write their own cookies.',
     visitors: {
       MemberExpression(path, state) {
-        if (resolvedMember(path) === 'document.cookie') state.report('SD-COOKIE-ACCESS', path.node, isAssignmentTarget(path) ? 'write' : 'read');
+        if (resolvedMember(path) === 'document.cookie') state.report('TS-COOKIE-ACCESS', path.node, isAssignmentTarget(path) ? 'write' : 'read');
       },
     },
   },
   {
-    id: 'SD-WEB-STORAGE',
+    id: 'TS-WEB-STORAGE',
     name: 'localStorage/sessionStorage access',
     description: 'The script uses Web Storage.',
     severity: 'info',
@@ -240,18 +240,18 @@ export const RULES: readonly Rule[] = [
       MemberExpression(path, state) {
         // window.localStorage / self.sessionStorage (bare identifiers are handled below).
         const chain = resolvedMember(path);
-        if (chain === 'localStorage' || chain === 'sessionStorage') state.report('SD-WEB-STORAGE', path.node, chain);
+        if (chain === 'localStorage' || chain === 'sessionStorage') state.report('TS-WEB-STORAGE', path.node, chain);
       },
       Identifier(path, state) {
         const n = path.node;
         if (n.type !== 'Identifier' || (n.name !== 'localStorage' && n.name !== 'sessionStorage')) return;
         const parent = path.parentPath?.node;
-        if (parent?.type === 'MemberExpression' && parent.object === n && isGlobal(path, n.name)) state.report('SD-WEB-STORAGE', n, n.name);
+        if (parent?.type === 'MemberExpression' && parent.object === n && isGlobal(path, n.name)) state.report('TS-WEB-STORAGE', n, n.name);
       },
     },
   },
   {
-    id: 'SD-SENSITIVE-FIELD-ACCESS',
+    id: 'TS-SENSITIVE-FIELD-ACCESS',
     name: 'Accesses payment or password fields',
     description: 'The script selects form fields whose names suggest passwords, card numbers, CVV or similar.',
     severity: 'high',
@@ -265,18 +265,18 @@ export const RULES: readonly Rule[] = [
         const last = lastSegment(calleeName(path.node));
         if (!last || !/^(querySelector|querySelectorAll|getElementById|getElementsByName|getElementsByClassName|closest|matches)$/.test(last)) return;
         const selector = stringPrefix(firstArg(path));
-        if (selector && SENSITIVE_FIELD.test(selector)) state.report('SD-SENSITIVE-FIELD-ACCESS', path.node, selector.slice(0, 80));
+        if (selector && SENSITIVE_FIELD.test(selector)) state.report('TS-SENSITIVE-FIELD-ACCESS', path.node, selector.slice(0, 80));
       },
       StringLiteral(path, state) {
         const n = path.node;
         if (n.type !== 'StringLiteral') return;
         // autocomplete tokens and type selectors in attribute selectors, e.g. 'input[autocomplete="cc-number"]'
-        if (/autocomplete\s*[*^$|~]?=\s*["']?cc-|type\s*=\s*["']?password/i.test(n.value)) state.report('SD-SENSITIVE-FIELD-ACCESS', n, n.value.slice(0, 80));
+        if (/autocomplete\s*[*^$|~]?=\s*["']?cc-|type\s*=\s*["']?password/i.test(n.value)) state.report('TS-SENSITIVE-FIELD-ACCESS', n, n.value.slice(0, 80));
       },
     },
   },
   {
-    id: 'SD-FORM-FIELD-ACCESS',
+    id: 'TS-FORM-FIELD-ACCESS',
     name: 'Reads form fields',
     description: 'The script selects form inputs or listens to form submission.',
     severity: 'low',
@@ -291,20 +291,20 @@ export const RULES: readonly Rule[] = [
         const last = lastSegment(name);
         if (last && /^(querySelector|querySelectorAll|getElementsByTagName)$/.test(last)) {
           const selector = stringPrefix(firstArg(path));
-          if (selector && FORM_FIELD.test(selector) && !SENSITIVE_FIELD.test(selector)) state.report('SD-FORM-FIELD-ACCESS', path.node, selector.slice(0, 80));
+          if (selector && FORM_FIELD.test(selector) && !SENSITIVE_FIELD.test(selector)) state.report('TS-FORM-FIELD-ACCESS', path.node, selector.slice(0, 80));
         }
         if (last === 'addEventListener') {
           const event = staticString(firstArg(path));
-          if (event && FORM_EVENTS.has(event)) state.report('SD-FORM-FIELD-ACCESS', path.node, `${event} listener`);
+          if (event && FORM_EVENTS.has(event)) state.report('TS-FORM-FIELD-ACCESS', path.node, `${event} listener`);
         }
       },
       MemberExpression(path, state) {
-        if (resolvedMember(path) === 'document.forms') state.report('SD-FORM-FIELD-ACCESS', path.node, 'document.forms');
+        if (resolvedMember(path) === 'document.forms') state.report('TS-FORM-FIELD-ACCESS', path.node, 'document.forms');
       },
     },
   },
   {
-    id: 'SD-KEYSTROKE-CAPTURE',
+    id: 'TS-KEYSTROKE-CAPTURE',
     name: 'Keystroke capture',
     description: 'The script listens to keyboard or input events.',
     severity: 'medium',
@@ -317,18 +317,18 @@ export const RULES: readonly Rule[] = [
       CallExpression(path, state) {
         if (lastSegment(calleeName(path.node)) !== 'addEventListener') return;
         const event = staticString(firstArg(path));
-        if (event && KEY_EVENTS.has(event)) state.report('SD-KEYSTROKE-CAPTURE', path.node, event);
+        if (event && KEY_EVENTS.has(event)) state.report('TS-KEYSTROKE-CAPTURE', path.node, event);
       },
       AssignmentExpression(path, state) {
         const n = path.node;
         if (n.type !== 'AssignmentExpression' || n.left.type !== 'MemberExpression') return;
         const prop = propertyName(n.left);
-        if (prop === 'onkeydown' || prop === 'onkeyup' || prop === 'onkeypress' || prop === 'oninput') state.report('SD-KEYSTROKE-CAPTURE', n, prop);
+        if (prop === 'onkeydown' || prop === 'onkeyup' || prop === 'onkeypress' || prop === 'oninput') state.report('TS-KEYSTROKE-CAPTURE', n, prop);
       },
     },
   },
   {
-    id: 'SD-CLIPBOARD',
+    id: 'TS-CLIPBOARD',
     name: 'Clipboard access',
     description: 'The script reads or writes the clipboard or listens to copy/paste events.',
     severity: 'medium',
@@ -339,23 +339,23 @@ export const RULES: readonly Rule[] = [
     falsePositives: '"Copy to clipboard" buttons and rich-text editors.',
     visitors: {
       MemberExpression(path, state) {
-        if (resolvedMember(path) === 'navigator.clipboard' && path.parentPath?.node.type === 'MemberExpression') state.report('SD-CLIPBOARD', path.node);
+        if (resolvedMember(path) === 'navigator.clipboard' && path.parentPath?.node.type === 'MemberExpression') state.report('TS-CLIPBOARD', path.node);
       },
       CallExpression(path, state) {
         const name = resolvedCallee(path);
         const last = lastSegment(name);
         if (last === 'addEventListener') {
           const event = staticString(firstArg(path));
-          if (event && CLIPBOARD_EVENTS.has(event)) state.report('SD-CLIPBOARD', path.node, `${event} listener`);
+          if (event && CLIPBOARD_EVENTS.has(event)) state.report('TS-CLIPBOARD', path.node, `${event} listener`);
         } else if (name === 'document.execCommand') {
           const cmd = staticString(firstArg(path))?.toLowerCase();
-          if (cmd === 'copy' || cmd === 'paste' || cmd === 'cut') state.report('SD-CLIPBOARD', path.node, `execCommand ${cmd}`);
+          if (cmd === 'copy' || cmd === 'paste' || cmd === 'cut') state.report('TS-CLIPBOARD', path.node, `execCommand ${cmd}`);
         }
       },
     },
   },
   {
-    id: 'SD-BEACON',
+    id: 'TS-BEACON',
     name: 'navigator.sendBeacon',
     description: 'The script sends data with navigator.sendBeacon.',
     severity: 'low',
@@ -367,14 +367,14 @@ export const RULES: readonly Rule[] = [
     visitors: {
       CallExpression(path, state) {
         if (resolvedCallee(path) === 'navigator.sendBeacon') {
-          state.report('SD-BEACON', path.node);
+          state.report('TS-BEACON', path.node);
           recordHost(state, firstArg(path));
         }
       },
     },
   },
   {
-    id: 'SD-WEBSOCKET',
+    id: 'TS-WEBSOCKET',
     name: 'WebSocket connection',
     description: 'The script opens a WebSocket connection.',
     severity: 'low',
@@ -386,14 +386,14 @@ export const RULES: readonly Rule[] = [
     visitors: {
       NewExpression(path, state) {
         if (calleeName(path.node) === 'WebSocket' && isGlobal(path, 'WebSocket')) {
-          state.report('SD-WEBSOCKET', path.node);
+          state.report('TS-WEBSOCKET', path.node);
           recordHost(state, firstArg(path));
         }
       },
     },
   },
   {
-    id: 'SD-REMOTE-ENDPOINT',
+    id: 'TS-REMOTE-ENDPOINT',
     name: 'Sends requests to absolute URLs',
     description: 'The script calls fetch/XMLHttpRequest or sets image URLs pointing at absolute remote endpoints.',
     severity: 'info',
@@ -415,19 +415,19 @@ export const RULES: readonly Rule[] = [
         if (!target) return;
         const host = urlHost(stringPrefix(target));
         if (host) {
-          state.report('SD-REMOTE-ENDPOINT', path.node, host);
+          state.report('TS-REMOTE-ENDPOINT', path.node, host);
           state.hosts.add(host);
         }
       },
       AssignmentExpression(path, state) {
         const n = path.node;
         if (n.type !== 'AssignmentExpression' || n.left.type !== 'MemberExpression' || propertyName(n.left) !== 'src') return;
-        // img.src = "https://..." (tracking pixels, and pixel-based exfiltration). Script elements are SD-REMOTE-SCRIPT-LOAD.
+        // img.src = "https://..." (tracking pixels, and pixel-based exfiltration). Script elements are TS-REMOTE-SCRIPT-LOAD.
         const kind = elementKind(path as unknown as ScopedPath, n.left.object);
         if (kind === 'script') return;
         const host = urlHost(stringPrefix(n.right));
         if (host) {
-          state.report('SD-REMOTE-ENDPOINT', n, `${kind ?? 'element'} src ${host}`);
+          state.report('TS-REMOTE-ENDPOINT', n, `${kind ?? 'element'} src ${host}`);
           state.hosts.add(host);
         }
       },
@@ -440,7 +440,7 @@ export const RULES: readonly Rule[] = [
     },
   },
   {
-    id: 'SD-NETWORK-API-HOOK',
+    id: 'TS-NETWORK-API-HOOK',
     name: 'Overrides network or form APIs',
     description: 'The script replaces fetch, XMLHttpRequest, sendBeacon, form submission or addEventListener.',
     severity: 'medium',
@@ -455,13 +455,13 @@ export const RULES: readonly Rule[] = [
         if (n.type !== 'AssignmentExpression') return;
         const target = n.left.type === 'MemberExpression' ? memberChain(n.left) : n.left.type === 'Identifier' ? n.left.name : undefined;
         if (target && NETWORK_HOOK_TARGETS.has(target) && (n.left.type !== 'Identifier' || isGlobal(path, n.left.name))) {
-          state.report('SD-NETWORK-API-HOOK', n, target);
+          state.report('TS-NETWORK-API-HOOK', n, target);
         }
       },
     },
   },
   {
-    id: 'SD-OBFUSCATION',
+    id: 'TS-OBFUSCATION',
     name: 'Obfuscated or heavily encoded code',
     description: 'The script shows several signs of deliberate obfuscation.',
     severity: 'medium',
@@ -513,11 +513,11 @@ export const RULES: readonly Rule[] = [
       if (s('stringTables') >= 1) indicators.push('large string lookup table');
       if (s('unescape') >= 2) indicators.push('percent-decoding of embedded strings');
       // Require several independent signals so that ordinary minified code does not match.
-      if (indicators.length >= 2) state.report('SD-OBFUSCATION', ast, indicators.join('; '));
+      if (indicators.length >= 2) state.report('TS-OBFUSCATION', ast, indicators.join('; '));
     },
   },
   {
-    id: 'SD-EXFIL-COMBINATION',
+    id: 'TS-EXFIL-COMBINATION',
     name: 'Sensitive data access combined with data transmission',
     description: 'The same script both reads sensitive input (form fields, keystrokes, clipboard) and sends data to remote endpoints.',
     severity: 'high',
@@ -528,11 +528,11 @@ export const RULES: readonly Rule[] = [
     falsePositives: 'Form analytics and session-replay tools legitimately capture input (often masked) and upload it. Verify the vendor and its masking configuration.',
     finalize(state, ast) {
       const has = (id: string): boolean => (state.counts.get(id) ?? 0) > 0;
-      const sources = ['SD-SENSITIVE-FIELD-ACCESS', 'SD-KEYSTROKE-CAPTURE', 'SD-CLIPBOARD', 'SD-FORM-FIELD-ACCESS'].filter(has);
-      const sinks = ['SD-BEACON', 'SD-WEBSOCKET', 'SD-REMOTE-ENDPOINT', 'SD-NETWORK-API-HOOK'].filter(has);
-      const strongSource = sources.some((s) => s !== 'SD-FORM-FIELD-ACCESS');
-      if (sources.length > 0 && sinks.length > 0 && (strongSource || has('SD-NETWORK-API-HOOK'))) {
-        state.report('SD-EXFIL-COMBINATION', ast, `sources: ${sources.join(', ')}; sinks: ${sinks.join(', ')}`);
+      const sources = ['TS-SENSITIVE-FIELD-ACCESS', 'TS-KEYSTROKE-CAPTURE', 'TS-CLIPBOARD', 'TS-FORM-FIELD-ACCESS'].filter(has);
+      const sinks = ['TS-BEACON', 'TS-WEBSOCKET', 'TS-REMOTE-ENDPOINT', 'TS-NETWORK-API-HOOK'].filter(has);
+      const strongSource = sources.some((s) => s !== 'TS-FORM-FIELD-ACCESS');
+      if (sources.length > 0 && sinks.length > 0 && (strongSource || has('TS-NETWORK-API-HOOK'))) {
+        state.report('TS-EXFIL-COMBINATION', ast, `sources: ${sources.join(', ')}; sinks: ${sinks.join(', ')}`);
       }
     },
   },

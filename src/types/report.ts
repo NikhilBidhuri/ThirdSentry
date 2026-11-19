@@ -24,7 +24,7 @@ export interface SiteComparisonSummary {
 /** The analysis report: scan facts + comparison with baselines + findings. */
 export interface AnalysisReport {
   readonly schemaVersion: 1;
-  readonly kind: 'scriptdrift-report';
+  readonly kind: 'thirdsentry-report';
   readonly generatedAt: string;
   readonly toolVersion: string;
   readonly scanId: string;

@@ -15,7 +15,7 @@ function packageInfo(): PackageInfo {
   for (let i = 0; i < 5; i++) {
     try {
       const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { name?: string; version?: string; homepage?: string };
-      if (pkg.name === 'scriptdrift' && pkg.version) {
+      if (pkg.name === 'thirdsentry' && pkg.version) {
         cached = { version: pkg.version, ...(pkg.homepage ? { homepage: pkg.homepage } : {}) };
         return cached;
       }

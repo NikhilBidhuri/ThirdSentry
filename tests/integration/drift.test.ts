@@ -23,7 +23,7 @@ async function cli(...args: string[]): Promise<{ code: number; stdout: string }>
     return true;
   });
   try {
-    const code = await main(['node', 'scriptdrift', '--config', join(dir, 'scriptdrift.yml'), ...args]);
+    const code = await main(['node', 'thirdsentry', '--config', join(dir, 'thirdsentry.yml'), ...args]);
     return { code, stdout: chunks.join('') };
   } finally {
     spy.mockRestore();
@@ -32,7 +32,7 @@ async function cli(...args: string[]): Promise<{ code: number; stdout: string }>
 }
 
 async function report(): Promise<AnalysisReport> {
-  return JSON.parse(await readFile(join(dir, '.scriptdrift', 'reports', 'report.json'), 'utf8')) as AnalysisReport;
+  return JSON.parse(await readFile(join(dir, '.thirdsentry', 'reports', 'report.json'), 'utf8')) as AnalysisReport;
 }
 
 beforeAll(async () => {
@@ -66,7 +66,7 @@ describe('drift detection end to end', () => {
     expect(rep.findings).toEqual([]);
     expect(rep.headline).toMatch(/No approved baseline/);
     for (const f of ['report.json', 'report.sarif', 'report.html']) {
-      expect((await readFile(join(dir, '.scriptdrift', 'reports', f), 'utf8')).length).toBeGreaterThan(100);
+      expect((await readFile(join(dir, '.thirdsentry', 'reports', f), 'utf8')).length).toBeGreaterThan(100);
     }
   }, 120_000);
 
@@ -78,13 +78,13 @@ describe('drift detection end to end', () => {
   it('creates the baseline explicitly', async () => {
     const r = await cli('baseline', '--yes', '--reason', 'initial review');
     expect(r.code).toBe(0);
-    const baseline = JSON.parse(await readFile(join(dir, '.scriptdrift', 'baselines', 'shop', 'baseline.json'), 'utf8')) as { resources: unknown[]; approvals: Array<{ reason: string }> };
+    const baseline = JSON.parse(await readFile(join(dir, '.thirdsentry', 'baselines', 'shop', 'baseline.json'), 'utf8')) as { resources: unknown[]; approvals: Array<{ reason: string }> };
     expect(baseline.resources.length).toBeGreaterThan(5);
     expect(baseline.approvals[0]?.reason).toBe('initial review');
   });
 
   it('a re-scan of the unchanged site produces no findings and does not touch the baseline', async () => {
-    const path = join(dir, '.scriptdrift', 'baselines', 'shop', 'baseline.json');
+    const path = join(dir, '.thirdsentry', 'baselines', 'shop', 'baseline.json');
     const before = await readFile(path, 'utf8');
     const r = await cli('scan', '--fail-on', 'info');
     const rep = await report();
@@ -148,7 +148,7 @@ describe('drift detection end to end', () => {
     expect(r.code).toBe(1);
     const sarif = JSON.parse(await readFile(join(out, 'report.sarif'), 'utf8')) as { runs: Array<{ results: unknown[] }> };
     expect(sarif.runs[0]?.results.length).toBeGreaterThan(0);
-    expect(await readFile(join(out, 'report.html'), 'utf8')).toContain('ScriptDrift report');
+    expect(await readFile(join(out, 'report.html'), 'utf8')).toContain('ThirdSentry report');
     const a = await cli('--json', 'alert', '--dry-run');
     expect(a.code).toBe(0);
     const csp = await cli('--json', 'csp-lint', '--from-scan');
@@ -161,7 +161,7 @@ describe('drift detection end to end', () => {
   });
 
   it('rejects unknown finding IDs', async () => {
-    const r = await cli('baseline', '--approve', 'SD-doesnotexist', '--yes');
+    const r = await cli('baseline', '--approve', 'TS-doesnotexist', '--yes');
     expect(r.code).toBe(2);
   });
 });

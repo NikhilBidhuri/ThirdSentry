@@ -4,7 +4,7 @@ import { CHANNELS, sendAlerts, type AlertRunResult, type ChannelName } from '../
 import { loadConfig } from '../../config/loader.js';
 import { reportJsonPath } from '../../monitoring/analysis-runner.js';
 import type { AnalysisReport } from '../../types/report.js';
-import { ConfigError, ScriptDriftError } from '../../utils/errors.js';
+import { ConfigError, ThirdSentryError } from '../../utils/errors.js';
 import { ExitCode } from '../../utils/exit-codes.js';
 import { pathExists, readJsonFile } from '../../utils/fs.js';
 import { globalOptions } from '../context.js';
@@ -32,10 +32,10 @@ export function printAlertResult(result: AlertRunResult): void {
 }
 
 export async function loadReport(path: string): Promise<AnalysisReport> {
-  if (!(await pathExists(path))) throw new ScriptDriftError(`Report not found: ${path}`, { exitCode: ExitCode.ConfigError, hint: 'Run "scriptdrift scan" or "scriptdrift report" first.' });
+  if (!(await pathExists(path))) throw new ThirdSentryError(`Report not found: ${path}`, { exitCode: ExitCode.ConfigError, hint: 'Run "thirdsentry scan" or "thirdsentry report" first.' });
   const data = (await readJsonFile(path)) as Partial<AnalysisReport>;
-  if (data.kind !== 'scriptdrift-report' || data.schemaVersion !== 1 || !Array.isArray(data.findings)) {
-    throw new ScriptDriftError(`${path} is not a ScriptDrift report`, { exitCode: ExitCode.ConfigError });
+  if (data.kind !== 'thirdsentry-report' || data.schemaVersion !== 1 || !Array.isArray(data.findings)) {
+    throw new ThirdSentryError(`${path} is not a ThirdSentry report`, { exitCode: ExitCode.ConfigError });
   }
   return data as AnalysisReport;
 }
@@ -44,7 +44,7 @@ export function registerAlert(program: Command): void {
   program
     .command('alert')
     .description('Send alerts for new findings in a report (the only command that uses alert credentials)')
-    .option('--report <file>', 'report.json to alert on (default: .scriptdrift/reports/report.json)')
+    .option('--report <file>', 'report.json to alert on (default: .thirdsentry/reports/report.json)')
     .option('--channel <names>', `only these channels (${CHANNELS.join(', ')})`)
     .option('--dry-run', 'show what would be sent without sending')
     .action(async (opts: AlertOptions, command: Command) => {

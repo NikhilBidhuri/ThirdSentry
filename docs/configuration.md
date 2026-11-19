@@ -1,8 +1,8 @@
 # Configuration reference
 
-ScriptDrift reads `scriptdrift.yml` from the current directory (or `scriptdrift.yaml`, `.scriptdrift/config.yml`), or the file passed with `--config`. The configuration is validated strictly: unknown keys are errors, so typos fail loudly instead of silently changing behaviour.
+ThirdSentry reads `thirdsentry.yml` from the current directory (or `thirdsentry.yaml`, `.thirdsentry/config.yml`), or the file passed with `--config`. The configuration is validated strictly: unknown keys are errors, so typos fail loudly instead of silently changing behaviour.
 
-Paths in the file are relative to the directory containing it. When the file lives in `.scriptdrift/config.yml`, paths are relative to the project root (the parent of `.scriptdrift/`).
+Paths in the file are relative to the directory containing it. When the file lives in `.thirdsentry/config.yml`, paths are relative to the project root (the parent of `.thirdsentry/`).
 
 ## Minimal example
 
@@ -22,7 +22,7 @@ sites:
 
 ```yaml
 version: 1
-storageDir: .scriptdrift
+storageDir: .thirdsentry
 
 defaults:
   browser:
@@ -108,7 +108,7 @@ retention:
 | Key | Default | Description |
 | --- | --- | --- |
 | `timeout` | `60000` | Navigation timeout per page (ms). |
-| `waitUntil` | `networkidle` | `load`, `domcontentloaded`, `commit` or `networkidle`. With `networkidle`, ScriptDrift waits for `load` and then up to `networkIdleTimeout` for the network to go quiet. Not reaching idle is a warning, not a failure. |
+| `waitUntil` | `networkidle` | `load`, `domcontentloaded`, `commit` or `networkidle`. With `networkidle`, ThirdSentry waits for `load` and then up to `networkIdleTimeout` for the network to go quiet. Not reaching idle is a warning, not a failure. |
 | `networkIdleTimeout` | `15000` | Upper bound for the idle wait (ms). |
 | `settleMs` | `3000` | Additional observation time after loading, to catch scripts injected with a delay. |
 | `captureScreenshots` | `false` | Save a viewport screenshot per page in `reports/screenshots/`. Screenshots can contain personal data shown on the page. |
@@ -139,7 +139,7 @@ See [security.md](security.md) for the reasoning behind these settings.
 | `network.allowedPrivateHosts` | `[]` | Host patterns allowed to resolve to private, loopback or link-local addresses (for deliberately scanning internal sites). Cloud metadata addresses stay blocked. |
 | `network.blockedHosts` | `[]` | Host patterns that are always refused. |
 | `network.resolverOverrides` | `{}` | Static `hostname: ip` mappings, still validated by the IP policy. Mainly for tests. |
-| `network.externalProxy` | unset | URL of an external ScriptDrift egress proxy (used by the Docker deployment). |
+| `network.externalProxy` | unset | URL of an external ThirdSentry egress proxy (used by the Docker deployment). |
 | `network.connectTimeoutMs` | `15000` | Upstream connect timeout. |
 | `network.idleTimeoutMs` | `60000` | Idle timeout for proxied connections. |
 | `isolation.mode` | `process` | `process` runs the browser in a child process with a scrubbed environment. `none` runs it in the coordinator process (debugging only). |
@@ -158,7 +158,7 @@ See [privacy.md](privacy.md).
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `storeScriptContent` | `false` | Keep script bodies in `.scriptdrift/cache/content/` (content-addressed). Needed to show code diffs between versions. |
+| `storeScriptContent` | `false` | Keep script bodies in `.thirdsentry/cache/content/` (content-addressed). Needed to show code diffs between versions. |
 | `maxScanReports` | `50` | Scan result files to keep. |
 | `maxAgeDays` | `90` | Delete scan results, screenshots and cached content older than this. |
 

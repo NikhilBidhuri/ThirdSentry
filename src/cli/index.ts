@@ -1,5 +1,5 @@
 import { Command, CommanderError } from 'commander';
-import { ScriptDriftError, errorMessage } from '../utils/errors.js';
+import { ThirdSentryError, errorMessage } from '../utils/errors.js';
 import { ExitCode } from '../utils/exit-codes.js';
 import { toolVersion } from '../utils/version.js';
 import { registerInit } from './commands/init.js';
@@ -14,11 +14,11 @@ import { registerCleanup } from './commands/cleanup.js';
 import { color } from './output.js';
 
 export function buildProgram(): Command {
-  const program = new Command('scriptdrift');
+  const program = new Command('thirdsentry');
   program
     .description('Watch the code you don\'t control: detect unexpected changes in third-party JavaScript.')
     .version(toolVersion(), '-V, --version')
-    .option('-c, --config <path>', 'path to scriptdrift.yml')
+    .option('-c, --config <path>', 'path to thirdsentry.yml')
     .option('-v, --verbose', 'verbose logging')
     .option('--json', 'machine-readable JSON output on stdout')
     .option('-q, --quiet', 'only log warnings and errors')
@@ -46,7 +46,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       if (error.code === 'commander.helpDisplayed' || error.code === 'commander.version' || error.code === 'commander.help') return ExitCode.Ok;
       return ExitCode.ConfigError;
     }
-    if (error instanceof ScriptDriftError) {
+    if (error instanceof ThirdSentryError) {
       process.stderr.write(`${color.red('Error:')} ${error.message}\n`);
       if (error.hint) process.stderr.write(`${color.yellow('Hint:')} ${error.hint}\n`);
       return error.exitCode;

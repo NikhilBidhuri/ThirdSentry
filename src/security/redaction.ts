@@ -1,5 +1,5 @@
 /**
- * Redaction helpers. ScriptDrift stores *metadata* about third-party
+ * Redaction helpers. ThirdSentry stores *metadata* about third-party
  * resources; it must never persist cookies, authorization headers, session
  * tokens or request bodies. Header storage is allowlist-based: anything not
  * explicitly known to be harmless is dropped.

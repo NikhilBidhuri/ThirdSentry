@@ -1,6 +1,6 @@
 # Privacy and data retention
 
-ScriptDrift visits your pages as an anonymous visitor (fresh browser context, no cookies, no login) and records metadata about the code that runs. Third-party scripts can contain proprietary code and configuration, and URLs can contain identifiers, so ScriptDrift stores as little as possible by default.
+ThirdSentry visits your pages as an anonymous visitor (fresh browser context, no cookies, no login) and records metadata about the code that runs. Third-party scripts can contain proprietary code and configuration, and URLs can contain identifiers, so ThirdSentry stores as little as possible by default.
 
 ## What is stored, and where
 
@@ -15,12 +15,12 @@ ScriptDrift visits your pages as an anonymous visitor (fresh browser context, no
 | Page errors | up to 20 per page, redacted | scan results | Bearer tokens and JWT-like strings are removed. Console messages are counted, not stored. |
 | CSP headers of scanned pages | stored | scan results | |
 | Blocked connection attempts | stored | scan results | Host, port, reason. |
-| **Script bodies** | **not stored** | `.scriptdrift/cache/content/` | Only with `retention.storeScriptContent: true` (needed for code diffs). Content-addressed, git-ignored. |
+| **Script bodies** | **not stored** | `.thirdsentry/cache/content/` | Only with `retention.storeScriptContent: true` (needed for code diffs). Content-addressed, git-ignored. |
 | Screenshots | **not taken** | `reports/screenshots/` | Only with `captureScreenshots: true`. Screenshots can show personal data displayed on the page. |
 | Finding/alert state | stored | `state/findings.json` | Finding IDs, timestamps, severities. |
 | Raw worker evidence | transient | temporary directory | Includes captured bodies for hashing; deleted after each scan (process mode) or kept in the evidence volume until the next scan (Docker). |
 
-**Never collected or stored:** cookies, authentication headers, session tokens in headers, request bodies, response bodies of non-script resources, form contents, keystrokes, or anything from a logged-in session (ScriptDrift does not log in).
+**Never collected or stored:** cookies, authentication headers, session tokens in headers, request bodies, response bodies of non-script resources, form contents, keystrokes, or anything from a logged-in session (ThirdSentry does not log in).
 
 ## Reports and alerts
 
@@ -30,7 +30,7 @@ ScriptDrift visits your pages as an anonymous visitor (fresh browser context, no
 
 ## What goes into Git
 
-`scriptdrift init` creates `.scriptdrift/.gitignore`, which excludes `reports/`, `cache/`, `state/` and `evidence/`. Only `scriptdrift.yml` and `.scriptdrift/baselines/` are meant to be committed. Baselines contain approved script identities, URLs, hashes, domains and indicator counts, but no code.
+`thirdsentry init` creates `.thirdsentry/.gitignore`, which excludes `reports/`, `cache/`, `state/` and `evidence/`. Only `thirdsentry.yml` and `.thirdsentry/baselines/` are meant to be committed. Baselines contain approved script identities, URLs, hashes, domains and indicator counts, but no code.
 
 ## Retention
 
@@ -43,16 +43,16 @@ ScriptDrift visits your pages as an anonymous visitor (fresh browser context, no
 Manual cleanup:
 
 ```bash
-npx scriptdrift cleanup                                   # apply retention now
-npx scriptdrift cleanup --older-than 7 --keep 10
-npx scriptdrift cleanup --all-content                     # delete cached bodies (keeps baseline-referenced ones)
-npx scriptdrift cleanup --all-content --include-referenced
-npx scriptdrift cleanup --reset-state                     # forget which findings were seen/alerted
-npx scriptdrift cleanup --dry-run
+npx thirdsentry cleanup                                   # apply retention now
+npx thirdsentry cleanup --older-than 7 --keep 10
+npx thirdsentry cleanup --all-content                     # delete cached bodies (keeps baseline-referenced ones)
+npx thirdsentry cleanup --all-content --include-referenced
+npx thirdsentry cleanup --reset-state                     # forget which findings were seen/alerted
+npx thirdsentry cleanup --dry-run
 ```
 
-To remove everything ScriptDrift has stored, delete `.scriptdrift/reports`, `.scriptdrift/cache` and `.scriptdrift/state` (and, in Docker, the `reports`, `state`, `cache` and `evidence` volumes: `docker compose down -v`). Baselines are only removed if you delete them yourself.
+To remove everything ThirdSentry has stored, delete `.thirdsentry/reports`, `.thirdsentry/cache` and `.thirdsentry/state` (and, in Docker, the `reports`, `state`, `cache` and `evidence` volumes: `docker compose down -v`). Baselines are only removed if you delete them yourself.
 
 ## Third parties contacted
 
-ScriptDrift itself contacts only the sites you configure (and whatever those pages load), and the alert destinations you enable. It sends no telemetry. In the browser, background networking, component updates, sync, DNS prefetching and DNS-over-HTTPS are disabled (Chromium), and telemetry, safe-browsing and update features are disabled (Firefox).
+ThirdSentry itself contacts only the sites you configure (and whatever those pages load), and the alert destinations you enable. It sends no telemetry. In the browser, background networking, component updates, sync, DNS prefetching and DNS-over-HTTPS are disabled (Chromium), and telemetry, safe-browsing and update features are disabled (Firefox).

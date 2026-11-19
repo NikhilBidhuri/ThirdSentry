@@ -7,7 +7,7 @@ import { runIsolatedCollection, validateEvidence } from '../security/worker-sand
 import { applyRetention, ContentStore, saveScanResult, saveScreenshots } from '../storage/filesystem-store.js';
 import { loadBaseline } from '../baseline/baseline-manager.js';
 import type { ScanEvidence } from '../types/evidence.js';
-import { ConfigError, ScriptDriftError } from '../utils/errors.js';
+import { ConfigError, ThirdSentryError } from '../utils/errors.js';
 import { getLogger } from '../utils/logger.js';
 
 export interface ScanRunOptions {
@@ -56,7 +56,7 @@ export async function preflight(resolved: ResolvedConfig, sites: readonly Resolv
     try {
       await validateTargetUrlWithDns(url, policy);
     } catch (error) {
-      if (error instanceof ScriptDriftError) throw new ConfigError(error.message, error.hint);
+      if (error instanceof ThirdSentryError) throw new ConfigError(error.message, error.hint);
       throw error;
     }
   }

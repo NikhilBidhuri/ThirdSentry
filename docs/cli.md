@@ -1,14 +1,14 @@
 # CLI reference
 
 ```
-scriptdrift [global options] <command> [command options]
+thirdsentry [global options] <command> [command options]
 ```
 
 ## Global options
 
 | Option | Description |
 | --- | --- |
-| `-c, --config <path>` | Configuration file (default: `scriptdrift.yml`, `scriptdrift.yaml` or `.scriptdrift/config.yml`). |
+| `-c, --config <path>` | Configuration file (default: `thirdsentry.yml`, `thirdsentry.yaml` or `.thirdsentry/config.yml`). |
 | `-v, --verbose` | Debug logging (to stderr). |
 | `--json` | Machine-readable JSON on stdout. Logs stay on stderr. |
 | `-q, --quiet` | Only warnings and errors are logged. |
@@ -26,9 +26,9 @@ scriptdrift [global options] <command> [command options]
 
 When both findings and incomplete pages occur, `1` takes precedence, because findings are the more urgent signal; the report still lists the incomplete pages.
 
-## `scriptdrift init`
+## `thirdsentry init`
 
-Create `scriptdrift.yml` and the `.scriptdrift/` directory.
+Create `thirdsentry.yml` and the `.thirdsentry/` directory.
 
 | Option | Description |
 | --- | --- |
@@ -36,22 +36,22 @@ Create `scriptdrift.yml` and the `.scriptdrift/` directory.
 | `--name <name>` | Site name to pre-fill (default `my-site`). |
 | `--force` | Overwrite an existing configuration. |
 
-## `scriptdrift scan`
+## `thirdsentry scan`
 
-Visit the configured pages in a browser, discover executable resources, hash them and save the result to `.scriptdrift/reports/scans/<scan-id>.json` (also copied to `reports/latest-scan.json`).
+Visit the configured pages in a browser, discover executable resources, hash them and save the result to `.thirdsentry/reports/scans/<scan-id>.json` (also copied to `reports/latest-scan.json`).
 
 | Option | Description |
 | --- | --- |
 | `-s, --site <names>` | Only scan these sites (comma separated). |
-| `-o, --output <dir>` | Directory for reports (default `.scriptdrift/reports`). |
+| `-o, --output <dir>` | Directory for reports (default `.thirdsentry/reports`). |
 | `-f, --format <formats>` | Report formats: `json`, `sarif`, `html` (comma separated; default `reporting.formats`). |
 | `--no-alerts` | Do not send alerts even if channels are enabled. |
 | `--fail-on <severity>` | Exit with code 1 if any unsuppressed finding is at least this severe: `info`, `low`, `medium`, `high`, `critical` or `none`. Default: `failOn` from the config (`high`). |
 | `--skip-preflight` | Skip DNS pre-flight checks. Every connection is still validated by the egress proxy. |
 
-After scanning, the result is compared with each site's baseline (if one exists), reports are written (`report.json`, `report.sarif`, `report.html`) and alerts are sent for new findings. The scan result itself is stored in `.scriptdrift/reports/scans/`. Scans never modify baselines.
+After scanning, the result is compared with each site's baseline (if one exists), reports are written (`report.json`, `report.sarif`, `report.html`) and alerts are sent for new findings. The scan result itself is stored in `.thirdsentry/reports/scans/`. Scans never modify baselines.
 
-## `scriptdrift baseline`
+## `thirdsentry baseline`
 
 Approve the current state (or selected findings) as expected. See [baselines.md](baselines.md) for the full workflow.
 
@@ -66,7 +66,7 @@ Approve the current state (or selected findings) as expected. See [baselines.md]
 | `--dry-run` | Show the summary without writing. |
 | `-y, --yes` | Do not prompt. Required when stdin is not a terminal. |
 
-## `scriptdrift diff`
+## `thirdsentry diff`
 
 Compare the latest scan (or `--scan <file>`) with the baselines without scanning again, and print findings and, where both versions are in the content cache, code diffs.
 
@@ -78,7 +78,7 @@ Compare the latest scan (or `--scan <file>`) with the baselines without scanning
 | `--context <lines>` | Context lines in code diffs (default 3). |
 | `--fail-on <severity>` | As for `scan`. |
 
-## `scriptdrift report`
+## `thirdsentry report`
 
 Regenerate reports from the latest (or a given) scan without scanning again.
 
@@ -86,16 +86,16 @@ Regenerate reports from the latest (or a given) scan without scanning again.
 | --- | --- |
 | `--scan <file>` | Scan result to report on. |
 | `-f, --format <formats>` | `json`, `sarif`, `html` (default `reporting.formats`). |
-| `-o, --output <dir>` | Output directory (default `.scriptdrift/reports`). |
+| `-o, --output <dir>` | Output directory (default `.thirdsentry/reports`). |
 | `--fail-on <severity>` | Exit with code 1 if a finding is at least this severe (default `none`). |
 
 | File | Purpose |
 | --- | --- |
-| `report.json` | Complete machine-readable report (`kind: scriptdrift-report`). |
-| `report.sarif` | SARIF 2.1.0 for GitHub Code Scanning. Results are anchored to the site's entry in `scriptdrift.yml`. |
+| `report.json` | Complete machine-readable report (`kind: thirdsentry-report`). |
+| `report.sarif` | SARIF 2.1.0 for GitHub Code Scanning. Results are anchored to the site's entry in `thirdsentry.yml`. |
 | `report.html` | Self-contained, script-free HTML report for people. |
 
-## `scriptdrift alert`
+## `thirdsentry alert`
 
 Send alerts for new findings in `report.json`. See [alerts.md](alerts.md).
 
@@ -107,13 +107,13 @@ Send alerts for new findings in `report.json`. See [alerts.md](alerts.md).
 
 Exit code `4` if any channel failed.
 
-## `scriptdrift csp-lint`
+## `thirdsentry csp-lint`
 
 Analyse Content-Security-Policy headers. See [csp.md](csp.md).
 
 ```bash
-scriptdrift csp-lint https://www.example.com [more URLs...]
-scriptdrift csp-lint --from-scan [--site <names>]
+thirdsentry csp-lint https://www.example.com [more URLs...]
+thirdsentry csp-lint --from-scan [--site <names>]
 ```
 
 | Option | Description |
@@ -124,7 +124,7 @@ scriptdrift csp-lint --from-scan [--site <names>]
 
 Works without a configuration file (default network policy). Exit `1` when `--fail-on` is exceeded, `3` when a URL could not be fetched.
 
-## `scriptdrift cleanup`
+## `thirdsentry cleanup`
 
 Delete old scan results, screenshots and cached script bodies. Baselines are never touched. See [privacy.md](privacy.md#retention).
 
@@ -143,6 +143,6 @@ Used by the [Docker deployment](docker.md), where each step runs in its own cont
 
 | Command | Purpose |
 | --- | --- |
-| `scriptdrift egress-proxy [--listen 0.0.0.0:3128]` | Run the egress proxy that enforces the network policy. |
-| `scriptdrift collect --out <file> [--proxy <url>] [--no-chromium-sandbox] [--site]` | Browser collection only; writes untrusted evidence. |
-| `scriptdrift analyze --evidence <file> [--format] [--output] [--fail-on]` | Validate evidence, compare with baselines and write reports. No network, no alerts. |
+| `thirdsentry egress-proxy [--listen 0.0.0.0:3128]` | Run the egress proxy that enforces the network policy. |
+| `thirdsentry collect --out <file> [--proxy <url>] [--no-chromium-sandbox] [--site]` | Browser collection only; writes untrusted evidence. |
+| `thirdsentry analyze --evidence <file> [--format] [--output] [--fail-on]` | Validate evidence, compare with baselines and write reports. No network, no alerts. |

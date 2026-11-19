@@ -3,7 +3,7 @@ import { RESOURCE_TYPES } from '../types/index.js';
 
 /**
  * Approved baseline for one site. Stored as stable, sorted JSON in
- * `.scriptdrift/baselines/<site>/baseline.json` so that changes are easy to
+ * `.thirdsentry/baselines/<site>/baseline.json` so that changes are easy to
  * review in pull requests.
  *
  * Baseline files are validated on every load: they live in Git and may be
@@ -57,7 +57,7 @@ export const ApprovalSchema = z
 export const BaselineSchema = z
   .object({
     schemaVersion: z.literal(BASELINE_SCHEMA_VERSION),
-    kind: z.literal('scriptdrift-baseline'),
+    kind: z.literal('thirdsentry-baseline'),
     site: z.string().min(1).max(64),
     siteUrl: z.string().max(16_384),
     createdAt: z.string().max(64),

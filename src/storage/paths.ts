@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 
 /**
- * Layout of the ScriptDrift storage directory (default `.scriptdrift/`).
+ * Layout of the ThirdSentry storage directory (default `.thirdsentry/`).
  *
  *   baselines/<site>/baseline.json   approved baseline (commit to Git)
  *   reports/scans/<scan-id>.json     scan results (do not commit by default)

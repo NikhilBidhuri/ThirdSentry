@@ -8,8 +8,8 @@ tests
 docs
 examples
 deploy
-.scriptdrift
-**/.scriptdrift
+.thirdsentry
+**/.thirdsentry
 .env
 .env.*
 *.log

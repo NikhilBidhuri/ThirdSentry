@@ -182,7 +182,7 @@ export function registerBaseline(program: Command): void {
 
       const unmatched = [...requested].filter((id) => !matchedIds.has(id));
       if (unmatched.length > 0) {
-        throw new BaselineError(`No current finding matches: ${unmatched.join(', ')}`, 'Run "scriptdrift diff" to list current finding IDs.');
+        throw new BaselineError(`No current finding matches: ${unmatched.join(', ')}`, 'Run "thirdsentry diff" to list current finding IDs.');
       }
       if (plans.length === 0) {
         if (g.json) printJson({ updated: [] });

@@ -1,12 +1,12 @@
-# ScriptDrift
+# ThirdSentry
 
-**Watch the code you don't control.** ScriptDrift is an open-source, self-hostable monitor that detects unexpected or suspicious changes in the third-party JavaScript running on your websites.
+**Watch the code you don't control.** ThirdSentry is an open-source, self-hostable monitor that detects unexpected or suspicious changes in the third-party JavaScript running on your websites.
 
 Your pages load code from analytics vendors, tag managers, payment providers, chat widgets and ad networks. You do not control that code, and it can change at any moment: a vendor ships a bad update, its CDN is compromised, or a script starts sending data somewhere new. Your own repository has not changed, yet your users are running different code.
 
-ScriptDrift visits your pages in a real browser, records every script that runs, hashes it, and compares it with a baseline you approved. When something changes, it tells you what changed, where, and why it might matter.
+ThirdSentry visits your pages in a real browser, records every script that runs, hashes it, and compares it with a baseline you approved. When something changes, it tells you what changed, where, and why it might matter.
 
-> ScriptDrift is a **monitoring and detection** tool. It does not block or remove malicious code, it cannot prove that code is safe, and it does not by itself make you PCI DSS compliant. It gives you evidence and early warning so that people can investigate.
+> ThirdSentry is a **monitoring and detection** tool. It does not block or remove malicious code, it cannot prove that code is safe, and it does not by itself make you PCI DSS compliant. It gives you evidence and early warning so that people can investigate.
 
 ## What it does
 
@@ -25,18 +25,18 @@ ScriptDrift visits your pages in a real browser, records every script that runs,
 Requirements: Node.js 20.11 or newer.
 
 ```bash
-npm install --save-dev scriptdrift
+npm install --save-dev thirdsentry
 npx playwright install chromium        # browser used for scanning
 
-npx scriptdrift init --url https://www.example.com --name my-store
-# edit scriptdrift.yml: add the pages you care about (e.g. /checkout)
+npx thirdsentry init --url https://www.example.com --name my-store
+# edit thirdsentry.yml: add the pages you care about (e.g. /checkout)
 
-npx scriptdrift scan                   # see which scripts your pages load
-npx scriptdrift baseline               # review, then approve the current state
-npx scriptdrift scan --fail-on high    # later: detect drift; non-zero exit on findings
-npx scriptdrift diff                   # review findings (and code diffs, if content retention is on)
-npx scriptdrift baseline --approve <finding-id>   # approve a reviewed change
-npx scriptdrift csp-lint https://www.example.com  # analyse your Content-Security-Policy
+npx thirdsentry scan                   # see which scripts your pages load
+npx thirdsentry baseline               # review, then approve the current state
+npx thirdsentry scan --fail-on high    # later: detect drift; non-zero exit on findings
+npx thirdsentry diff                   # review findings (and code diffs, if content retention is on)
+npx thirdsentry baseline --approve <finding-id>   # approve a reviewed change
+npx thirdsentry csp-lint https://www.example.com  # analyse your Content-Security-Policy
 ```
 
 A scan prints what it found:
@@ -61,24 +61,24 @@ my-store https://www.example.com/ — complete (chromium 140.0.7339.16)
 | Topic | |
 | --- | --- |
 | [Installation](docs/installation.md) | npm, Docker, browsers |
-| [Configuration](docs/configuration.md) | every `scriptdrift.yml` option |
+| [Configuration](docs/configuration.md) | every `thirdsentry.yml` option |
 | [CLI reference](docs/cli.md) | commands, flags and exit codes |
 | [Baselines](docs/baselines.md) | approving and updating what is expected |
 | [Detection rules](docs/rules.md) | static-analysis rules and risk scoring |
 | [Alerts](docs/alerts.md) | Slack, webhook, GitHub Issues, email |
 | [GitHub Actions](docs/github-actions.md) | scheduled scans in CI |
 | [Docker](docs/docker.md) and [cron](docs/cron.md) | self-hosted scheduled scans |
-| [CSP analysis](docs/csp.md) | `scriptdrift csp-lint` |
+| [CSP analysis](docs/csp.md) | `thirdsentry csp-lint` |
 | [Security model](docs/security.md) | threat model and isolation boundaries |
 | [Privacy and data retention](docs/privacy.md) | exactly what is collected and stored |
-| [Known limitations](docs/limitations.md) | what ScriptDrift cannot see |
+| [Known limitations](docs/limitations.md) | what ThirdSentry cannot see |
 | [Architecture](docs/architecture.md) | how the pieces fit together |
 | [Troubleshooting](docs/troubleshooting.md) | common problems |
 | [Contributing](CONTRIBUTING.md) | development setup and guidelines |
 
 ## Project status
 
-ScriptDrift is a young project. The scanner, baselines, change detection, static analysis, reports, alerts, CSP linter, Docker pipeline and GitHub Action are implemented and covered by automated tests that run against local fixture servers. The alert integrations are tested against local mock servers, not against live Slack, GitHub or SMTP services, and the GitHub Action is not exercised by this repository's test suite. See [docs/limitations.md](docs/limitations.md) for an honest list of what ScriptDrift does not cover.
+ThirdSentry is a young project. The scanner, baselines, change detection, static analysis, reports, alerts, CSP linter, Docker pipeline and GitHub Action are implemented and covered by automated tests that run against local fixture servers. The alert integrations are tested against local mock servers, not against live Slack, GitHub or SMTP services, and the GitHub Action is not exercised by this repository's test suite. See [docs/limitations.md](docs/limitations.md) for an honest list of what ThirdSentry does not cover.
 
 ## License
 

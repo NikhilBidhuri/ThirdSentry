@@ -10,7 +10,7 @@ import { projectHomepage } from '../utils/version.js';
  * SARIF 2.1.0 output for GitHub Code Scanning and other SARIF consumers.
  *
  * Third-party scripts are not files in your repository, so every result is
- * anchored to the site's entry in scriptdrift.yml (the closest thing in the
+ * anchored to the site's entry in thirdsentry.yml (the closest thing in the
  * repository that "owns" the monitored page). The script URL, hashes and
  * evidence are carried in the message and result properties.
  */
@@ -40,14 +40,14 @@ const KIND_DESCRIPTIONS: Record<string, string> = {
 };
 
 export interface SarifOptions {
-  /** Absolute path of scriptdrift.yml. */
+  /** Absolute path of thirdsentry.yml. */
   readonly configPath: string;
   /** Repository root used to make artifact paths relative (default: config directory's project root). */
   readonly baseDir: string;
 }
 
 function ruleIdFor(f: Finding): string {
-  return `scriptdrift/${f.kind}`;
+  return `thirdsentry/${f.kind}`;
 }
 
 async function siteLines(configPath: string): Promise<Map<string, number>> {
@@ -74,20 +74,20 @@ function messageFor(f: Finding): string {
 
 export async function buildSarif(report: AnalysisReport, options: SarifOptions): Promise<Record<string, unknown>> {
   const lines = await siteLines(options.configPath);
-  const configUri = relative(options.baseDir, options.configPath).split('\\').join('/') || 'scriptdrift.yml';
+  const configUri = relative(options.baseDir, options.configPath).split('\\').join('/') || 'thirdsentry.yml';
 
   const homepage = projectHomepage();
   const ruleIds = [...new Set(report.findings.map(ruleIdFor))].sort();
   const rules = ruleIds.map((id) => {
-    const kind = id.slice('scriptdrift/'.length);
+    const kind = id.slice('thirdsentry/'.length);
     const worst = report.findings.filter((f) => ruleIdFor(f) === id).reduce<Severity>((w, f) => (SECURITY_SEVERITY[f.severity] > SECURITY_SEVERITY[w] ? f.severity : w), 'info');
     return {
       id,
       name: kind.replace(/(^|-)(\w)/g, (_m, _d: string, c: string) => c.toUpperCase()),
       shortDescription: { text: KIND_DESCRIPTIONS[kind] ?? kind },
-      fullDescription: { text: `${KIND_DESCRIPTIONS[kind] ?? kind} ScriptDrift reports changes and behaviour worth reviewing; a result is not proof of malicious activity.` },
+      fullDescription: { text: `${KIND_DESCRIPTIONS[kind] ?? kind} ThirdSentry reports changes and behaviour worth reviewing; a result is not proof of malicious activity.` },
       ...(homepage ? { helpUri: `${homepage.replace(/\/$/, '')}/blob/main/docs/rules.md` } : {}),
-      help: { text: 'Review the change, confirm it with the vendor if unexpected, and approve it with "scriptdrift baseline --approve <finding-id>" once it is understood.' },
+      help: { text: 'Review the change, confirm it with the vendor if unexpected, and approve it with "thirdsentry baseline --approve <finding-id>" once it is understood.' },
       defaultConfiguration: { level: LEVEL[worst] },
       properties: { tags: ['security', 'supply-chain', 'third-party-javascript'], 'security-severity': SECURITY_SEVERITY[worst], precision: 'medium' },
     };
@@ -106,7 +106,7 @@ export async function buildSarif(report: AnalysisReport, options: SarifOptions):
           logicalLocations: [{ name: f.site, kind: 'module', fullyQualifiedName: `${f.site}${f.page ?? ''}` }],
         },
       ],
-      partialFingerprints: { 'scriptdriftFindingId/v1': f.id },
+      partialFingerprints: { 'thirdsentryFindingId/v1': f.id },
       properties: {
         findingId: f.id,
         site: f.site,
@@ -133,8 +133,8 @@ export async function buildSarif(report: AnalysisReport, options: SarifOptions):
     version: '2.1.0',
     runs: [
       {
-        tool: { driver: { name: 'ScriptDrift', ...(homepage ? { informationUri: homepage } : {}), semanticVersion: report.toolVersion, version: report.toolVersion, rules } },
-        automationDetails: { id: `scriptdrift/${report.sites.map((s) => s.name).join('+')}/` },
+        tool: { driver: { name: 'ThirdSentry', ...(homepage ? { informationUri: homepage } : {}), semanticVersion: report.toolVersion, version: report.toolVersion, rules } },
+        automationDetails: { id: `thirdsentry/${report.sites.map((s) => s.name).join('+')}/` },
         invocations: [
           {
             executionSuccessful: report.scanStatus === 'complete',

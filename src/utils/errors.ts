@@ -1,7 +1,7 @@
 import { ExitCode, type ExitCodeValue } from './exit-codes.js';
 
-/** Base class for all expected (user-facing) ScriptDrift errors. */
-export class ScriptDriftError extends Error {
+/** Base class for all expected (user-facing) ThirdSentry errors. */
+export class ThirdSentryError extends Error {
   readonly exitCode: ExitCodeValue;
   readonly hint: string | undefined;
 
@@ -13,25 +13,25 @@ export class ScriptDriftError extends Error {
   }
 }
 
-export class ConfigError extends ScriptDriftError {
+export class ConfigError extends ThirdSentryError {
   constructor(message: string, hint?: string) {
     super(message, { exitCode: ExitCode.ConfigError, ...(hint === undefined ? {} : { hint }) });
   }
 }
 
-export class UrlValidationError extends ScriptDriftError {
+export class UrlValidationError extends ThirdSentryError {
   constructor(message: string, hint?: string) {
     super(message, { exitCode: ExitCode.ConfigError, ...(hint === undefined ? {} : { hint }) });
   }
 }
 
-export class EvidenceValidationError extends ScriptDriftError {
+export class EvidenceValidationError extends ThirdSentryError {
   constructor(message: string, cause?: unknown) {
     super(message, { exitCode: ExitCode.InternalError, cause });
   }
 }
 
-export class BaselineError extends ScriptDriftError {
+export class BaselineError extends ThirdSentryError {
   constructor(message: string, hint?: string) {
     super(message, { exitCode: ExitCode.ConfigError, ...(hint === undefined ? {} : { hint }) });
   }

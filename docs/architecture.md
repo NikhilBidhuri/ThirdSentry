@@ -1,11 +1,11 @@
 # Architecture
 
-ScriptDrift is a TypeScript (Node.js, ESM) application organised around explicit trust boundaries: untrusted evidence is produced by an isolated browser worker and turned into findings by trusted code that never executes it.
+ThirdSentry is a TypeScript (Node.js, ESM) application organised around explicit trust boundaries: untrusted evidence is produced by an isolated browser worker and turned into findings by trusted code that never executes it.
 
 ## Data flow
 
 ```
-scriptdrift.yml ──► config (Zod, strict) ──► resolved sites/pages
+thirdsentry.yml ──► config (Zod, strict) ──► resolved sites/pages
                                                │
                      ┌─────────────────────────▼────────────────────────┐
                      │ browser worker (separate process or container)   │

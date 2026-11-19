@@ -1,4 +1,4 @@
-import type { ScriptDriftConfig } from '../config/schema.js';
+import type { ThirdSentryConfig } from '../config/schema.js';
 import type { ScriptResource } from '../types/index.js';
 import { matchesAnyGlob } from '../utils/patterns.js';
 import { analyzeJavaScript } from './ast-analyzer.js';
@@ -25,14 +25,14 @@ const ANALYZABLE = new Set<ScriptResource['type']>([
   'fetched-script',
 ]);
 
-export function enabledRules(config: Pick<ScriptDriftConfig, 'rules'>): Rule[] {
+export function enabledRules(config: Pick<ThirdSentryConfig, 'rules'>): Rule[] {
   return RULES.filter((r) => config.rules[r.id]?.enabled !== false);
 }
 
 export function analyzeResources(
   resources: readonly ScriptResource[],
   contents: ReadonlyMap<string, Buffer>,
-  config: Pick<ScriptDriftConfig, 'rules' | 'analysis'>,
+  config: Pick<ThirdSentryConfig, 'rules' | 'analysis'>,
 ): void {
   if (!config.analysis.enabled) return;
   const rules = enabledRules(config);

@@ -195,7 +195,7 @@ export interface ScanSummary {
 
 export interface ScanResult {
   readonly schemaVersion: 1;
-  readonly kind: 'scriptdrift-scan';
+  readonly kind: 'thirdsentry-scan';
   readonly scanId: string;
   readonly toolVersion: string;
   readonly startedAt: string;

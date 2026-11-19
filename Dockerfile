@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# ScriptDrift container image.
+# ThirdSentry container image.
 #
 # Based on Microsoft's Playwright image, which ships Node.js and browser builds
 # (Chromium, Firefox, WebKit) matching the pinned Playwright version. Keep the
@@ -18,22 +18,22 @@ RUN npx tsc -p tsconfig.build.json \
  && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
 FROM ${PLAYWRIGHT_IMAGE} AS runtime
-LABEL org.opencontainers.image.title="ScriptDrift" \
+LABEL org.opencontainers.image.title="ThirdSentry" \
       org.opencontainers.image.description="Third-party JavaScript security monitoring" \
       org.opencontainers.image.licenses="Apache-2.0"
 ENV NODE_ENV=production \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     NO_UPDATE_NOTIFIER=1
-WORKDIR /opt/scriptdrift
+WORKDIR /opt/thirdsentry
 COPY --from=build /src/package.json ./package.json
 COPY --from=build /src/node_modules ./node_modules
 COPY --from=build /src/dist ./dist
 COPY LICENSE README.md ./
 # Pre-create mount points owned by the unprivileged user so that named volumes
 # inherit the right ownership. The image already contains the "pwuser" account.
-RUN mkdir -p /work/.scriptdrift/reports /work/.scriptdrift/state /work/.scriptdrift/cache /work/.scriptdrift/baselines /evidence \
+RUN mkdir -p /work/.thirdsentry/reports /work/.thirdsentry/state /work/.thirdsentry/cache /work/.thirdsentry/baselines /evidence \
  && chown -R pwuser:pwuser /work /evidence
 USER pwuser
 WORKDIR /work
-ENTRYPOINT ["node", "/opt/scriptdrift/dist/cli/bin.js"]
+ENTRYPOINT ["node", "/opt/thirdsentry/dist/cli/bin.js"]
 CMD ["--help"]

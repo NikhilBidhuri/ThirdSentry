@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { RULES_BY_ID } from '../analysis/indicator-rules.js';
 
 /**
- * ScriptDrift configuration schema (scriptdrift.yml).
+ * ThirdSentry configuration schema (thirdsentry.yml).
  *
  * All objects are strict: unknown keys are rejected so that typos such as
  * `enable: false` do not silently change behaviour.
@@ -99,7 +99,7 @@ export const NetworkSecuritySchema = z
     /** Static hostname → IP overrides (results are still validated). Mainly for tests. */
     resolverOverrides: z.record(z.string(), z.string()).default({}),
     /**
-     * Use an external ScriptDrift egress proxy (e.g. the egress-proxy container)
+     * Use an external ThirdSentry egress proxy (e.g. the egress-proxy container)
      * instead of starting one inside the browser worker.
      */
     externalProxy: z.string().optional(),
@@ -149,7 +149,7 @@ export const ServiceWorkerSchema = z
 
 export const RetentionSchema = z
   .object({
-    /** Store script bodies in .scriptdrift/cache/content (needed for code diffs). Off by default. */
+    /** Store script bodies in .thirdsentry/cache/content (needed for code diffs). Off by default. */
     storeScriptContent: z.boolean().default(false),
     /** Number of scan reports to keep. */
     maxScanReports: z.number().int().min(1).max(100_000).default(50),
@@ -210,9 +210,9 @@ export const DomainPolicySchema = z
 
 export const SuppressionSchema = z
   .object({
-    /** Finding ID (SD-xxxxxxxxxxxx) to suppress. */
-    id: z.string().regex(/^SD-[0-9a-f]{12}$/).optional(),
-    /** Finding kind (e.g. new-outbound-host) or rule id (e.g. SD-COOKIE-ACCESS). */
+    /** Finding ID (TS-xxxxxxxxxxxx) to suppress. */
+    id: z.string().regex(/^TS-[0-9a-f]{12}$/).optional(),
+    /** Finding kind (e.g. new-outbound-host) or rule id (e.g. TS-COOKIE-ACCESS). */
     kind: z.string().max(64).optional(),
     rule: z.string().max(64).optional(),
     site: z.string().max(64).optional(),
@@ -242,7 +242,7 @@ const alertSeverity = z.enum(SEVERITIES);
 export const SlackAlertSchema = z
   .object({
     enabled: z.boolean().default(false),
-    webhookUrl: envString.default('${SCRIPTDRIFT_SLACK_WEBHOOK}'),
+    webhookUrl: envString.default('${THIRDSENTRY_SLACK_WEBHOOK}'),
     minSeverity: alertSeverity.optional(),
   })
   .strict();
@@ -250,8 +250,8 @@ export const SlackAlertSchema = z
 export const WebhookAlertSchema = z
   .object({
     enabled: z.boolean().default(false),
-    url: envString.default('${SCRIPTDRIFT_WEBHOOK_URL}'),
-    /** Optional HMAC-SHA256 signing secret (X-ScriptDrift-Signature header). */
+    url: envString.default('${THIRDSENTRY_WEBHOOK_URL}'),
+    /** Optional HMAC-SHA256 signing secret (X-ThirdSentry-Signature header). */
     secret: envString.optional(),
     minSeverity: alertSeverity.optional(),
     /** Allow plain-http URLs (e.g. an internal receiver). Off by default. */
@@ -267,7 +267,7 @@ export const GithubAlertSchema = z
     repository: envString.default('${GITHUB_REPOSITORY}'),
     token: envString.default('${GITHUB_TOKEN}'),
     apiUrl: envString.default('https://api.github.com'),
-    labels: z.array(z.string().min(1).max(50)).max(10).default(['scriptdrift', 'security']),
+    labels: z.array(z.string().min(1).max(50)).max(10).default(['thirdsentry', 'security']),
     maxIssuesPerRun: z.number().int().min(1).max(100).default(10),
     minSeverity: alertSeverity.optional(),
   })
@@ -276,16 +276,16 @@ export const GithubAlertSchema = z
 export const EmailAlertSchema = z
   .object({
     enabled: z.boolean().default(false),
-    host: envString.default('${SCRIPTDRIFT_SMTP_HOST}'),
-    port: z.union([z.number().int().min(1).max(65535), envString]).default('${SCRIPTDRIFT_SMTP_PORT}'),
+    host: envString.default('${THIRDSENTRY_SMTP_HOST}'),
+    port: z.union([z.number().int().min(1).max(65535), envString]).default('${THIRDSENTRY_SMTP_PORT}'),
     /** true = implicit TLS (port 465); false = STARTTLS when offered. */
     secure: z.boolean().default(false),
     /** Require STARTTLS (refuse to send credentials over a plain connection). */
     requireTLS: z.boolean().default(true),
     username: envString.optional(),
     password: envString.optional(),
-    from: envString.default('${SCRIPTDRIFT_SMTP_FROM}'),
-    to: z.union([z.array(envString).min(1), envString]).default('${SCRIPTDRIFT_SMTP_TO}'),
+    from: envString.default('${THIRDSENTRY_SMTP_FROM}'),
+    to: z.union([z.array(envString).min(1), envString]).default('${THIRDSENTRY_SMTP_TO}'),
     minSeverity: alertSeverity.optional(),
   })
   .strict();
@@ -327,7 +327,7 @@ export const ConfigSchema = z
   .object({
     version: z.literal(1).default(1),
     /** Directory for baselines, reports, state and cache (relative to the config file). */
-    storageDir: z.string().min(1).default('.scriptdrift'),
+    storageDir: z.string().min(1).default('.thirdsentry'),
     defaults: DefaultsSchema.prefault({}),
     sites: z.array(SiteSchema).min(1, 'at least one site must be configured'),
     limits: LimitsSchema.prefault({}),
@@ -336,7 +336,7 @@ export const ConfigSchema = z
     retention: RetentionSchema.prefault({}),
     risk: RiskSchema.prefault({}),
     analysis: AnalysisSchema.prefault({}),
-    rules: z.record(z.string().regex(/^SD-[A-Z0-9-]+$/, 'rule ids look like SD-EVAL'), RuleConfigSchema).default({}),
+    rules: z.record(z.string().regex(/^TS-[A-Z0-9-]+$/, 'rule ids look like TS-EVAL'), RuleConfigSchema).default({}),
     domains: DomainPolicySchema.prefault({}),
     suppressions: z.array(SuppressionSchema).default([]),
     reporting: ReportingSchema.prefault({}),
@@ -360,7 +360,7 @@ export const ConfigSchema = z
     }
   });
 
-export type ScriptDriftConfig = z.infer<typeof ConfigSchema>;
+export type ThirdSentryConfig = z.infer<typeof ConfigSchema>;
 export type SiteConfig = z.infer<typeof SiteSchema>;
 export type ScanOptions = z.infer<typeof ScanOptionsSchema>;
 export type BrowserProfileName = (typeof BROWSER_PROFILES)[number];

@@ -7,7 +7,7 @@ import { validateBaseline } from './baseline-validator.js';
 
 /**
  * Baseline management. Baselines are only ever written by the explicit
- * `scriptdrift baseline` command (never by scans), and every write records an
+ * `thirdsentry baseline` command (never by scans), and every write records an
  * approval entry for auditability.
  */
 
@@ -130,7 +130,7 @@ export function createBaseline(site: SiteResult, options: ApprovalOptions & { in
   const resources = baselineResourcesFrom(resourcesFromCompletePages(site, complete, options.includePartial === true), at);
   return {
     schemaVersion: BASELINE_SCHEMA_VERSION,
-    kind: 'scriptdrift-baseline',
+    kind: 'thirdsentry-baseline',
     site: site.name,
     siteUrl: site.url,
     createdAt: at,

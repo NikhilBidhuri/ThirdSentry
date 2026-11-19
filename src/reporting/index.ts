@@ -25,7 +25,7 @@ export interface WrittenReports {
   readonly html?: string;
 }
 
-/** Write the requested report formats to `outputDir` (default: .scriptdrift/reports). */
+/** Write the requested report formats to `outputDir` (default: .thirdsentry/reports). */
 export async function writeReports(
   resolved: ResolvedConfig,
   report: AnalysisReport,

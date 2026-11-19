@@ -3,7 +3,7 @@ import { createNetworkPolicy, loadConfig, type ResolvedConfig } from '../../conf
 import { ConfigSchema } from '../../config/schema.js';
 import { buildLintResult, lintHeaders, lintUrl, type CspLintResult, type CspLintTarget } from '../../csp/csp-lint.js';
 import { loadLatestScan } from '../../storage/filesystem-store.js';
-import { ConfigError, ScriptDriftError } from '../../utils/errors.js';
+import { ConfigError, ThirdSentryError } from '../../utils/errors.js';
 import { ExitCode } from '../../utils/exit-codes.js';
 import { globalOptions } from '../context.js';
 import { color, print, printJson } from '../output.js';
@@ -39,7 +39,7 @@ async function tryLoadConfig(configPath?: string): Promise<ResolvedConfig | unde
     return await loadConfig({ ...(configPath ? { configPath } : {}) });
   } catch (error) {
     if (configPath) throw error;
-    if (error instanceof ConfigError && /No ScriptDrift configuration found/.test(error.message)) return undefined;
+    if (error instanceof ConfigError && /No ThirdSentry configuration found/.test(error.message)) return undefined;
     throw error;
   }
 }
@@ -58,7 +58,7 @@ export function registerCspLint(program: Command): void {
       const resolved = await tryLoadConfig(g.config);
       const targets: CspLintTarget[] = [];
       if (opts.fromScan) {
-        if (!resolved) throw new ConfigError('--from-scan needs a ScriptDrift configuration', 'Run inside a project with scriptdrift.yml or pass --config.');
+        if (!resolved) throw new ConfigError('--from-scan needs a ThirdSentry configuration', 'Run inside a project with thirdsentry.yml or pass --config.');
         const scan = await loadLatestScan(resolved.paths);
         const names = opts.site?.split(',').map((s) => s.trim());
         for (const site of scan.sites.filter((s) => !names || names.includes(s.name))) {
@@ -75,7 +75,7 @@ export function registerCspLint(program: Command): void {
           try {
             targets.push(await lintUrl(url, policy));
           } catch (error) {
-            if (error instanceof ScriptDriftError) throw error;
+            if (error instanceof ThirdSentryError) throw error;
             targets.push({ url, source: 'fetch', policies: [], findings: [], scriptsRestricted: false, error: error instanceof Error ? error.message : String(error) });
           }
         }

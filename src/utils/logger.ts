@@ -29,7 +29,7 @@ let rootLogger: Logger = createLogger('info');
 export function createLogger(level: string): Logger {
   return pino(
     {
-      name: 'scriptdrift',
+      name: 'thirdsentry',
       level,
       redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
       base: null,

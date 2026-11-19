@@ -1,11 +1,11 @@
 {
-  "name": "scriptdrift",
+  "name": "thirdsentry",
   "version": "0.1.0",
   "description": "Watch the code you don't control. Open-source third-party JavaScript security monitoring.",
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
-    "scriptdrift": "dist/cli/bin.js"
+    "thirdsentry": "dist/cli/bin.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

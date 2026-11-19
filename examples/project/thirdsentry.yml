@@ -1,5 +1,5 @@
-# Example ScriptDrift project used by docker-compose.yml.
-# Copy this directory, point SCRIPTDRIFT_PROJECT_DIR at it, and edit the sites.
+# Example ThirdSentry project used by docker-compose.yml.
+# Copy this directory, point THIRDSENTRY_PROJECT_DIR at it, and edit the sites.
 version: 1
 
 defaults:
@@ -23,8 +23,8 @@ alerts:
   minSeverity: medium
   slack:
     enabled: false
-    webhookUrl: ${SCRIPTDRIFT_SLACK_WEBHOOK}
+    webhookUrl: ${THIRDSENTRY_SLACK_WEBHOOK}
   webhook:
     enabled: false
-    url: ${SCRIPTDRIFT_WEBHOOK_URL}
-    secret: ${SCRIPTDRIFT_WEBHOOK_SECRET}
+    url: ${THIRDSENTRY_WEBHOOK_URL}
+    secret: ${THIRDSENTRY_WEBHOOK_SECRET}

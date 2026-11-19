@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { CollectRequest } from '../browser/collector.js';
 import { ScanEvidenceSchema, type ScanEvidence } from '../types/evidence.js';
-import { EvidenceValidationError, ScriptDriftError } from '../utils/errors.js';
+import { EvidenceValidationError, ThirdSentryError } from '../utils/errors.js';
 import { readJsonFile } from '../utils/fs.js';
 import { getLogger } from '../utils/logger.js';
 import { formatZodIssues } from '../config/loader.js';
@@ -74,8 +74,8 @@ export function buildWorkerEnv(sandboxDir: string, parentEnv: NodeJS.ProcessEnv 
     env.LOCALAPPDATA = join(home, 'AppData', 'Local');
     env.APPDATA = join(home, 'AppData', 'Roaming');
   }
-  env.SCRIPTDRIFT_WORKER = '1';
-  env.SCRIPTDRIFT_LOG_LEVEL = logLevel;
+  env.THIRDSENTRY_WORKER = '1';
+  env.THIRDSENTRY_LOG_LEVEL = logLevel;
   return env;
 }
 
@@ -86,7 +86,7 @@ export function resolveWorkerEntry(): string {
   // Running from TypeScript sources (tests/dev): use the build output.
   const built = resolve(dirname(here), '..', '..', 'dist', 'browser', 'worker-entry.js');
   if (!existsSync(built)) {
-    throw new ScriptDriftError('Compiled browser worker not found', {
+    throw new ThirdSentryError('Compiled browser worker not found', {
       hint: 'Run "npm run build" first, or set security.isolation.mode: none for debugging.',
     });
   }
@@ -102,7 +102,7 @@ export interface SandboxOptions {
 export async function runIsolatedCollection(request: CollectRequest, options: SandboxOptions): Promise<ScanEvidence> {
   const log = getLogger('worker-sandbox');
   const entry = resolveWorkerEntry();
-  const sandboxDir = await mkdtemp(join(tmpdir(), 'scriptdrift-worker-'));
+  const sandboxDir = await mkdtemp(join(tmpdir(), 'thirdsentry-worker-'));
   try {
     await mkdir(join(sandboxDir, 'home'), { recursive: true });
     await mkdir(join(sandboxDir, 'tmp'), { recursive: true });
@@ -135,7 +135,7 @@ export async function runIsolatedCollection(request: CollectRequest, options: Sa
       });
     });
     if (exitCode !== 0) {
-      throw new ScriptDriftError(`Browser worker exited with code ${String(exitCode)}`, {
+      throw new ThirdSentryError(`Browser worker exited with code ${String(exitCode)}`, {
         hint: 'Run with --verbose for worker logs. If Chromium cannot start its sandbox, see docs/troubleshooting.md.',
       });
     }

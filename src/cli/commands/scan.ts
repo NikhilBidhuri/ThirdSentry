@@ -24,7 +24,7 @@ export interface ScanCommandOptions {
 }
 
 /** Indicators shown in the default resource list (others appear with --verbose). */
-const NOTABLE_RULES = new Set(['SD-EVAL', 'SD-NEW-FUNCTION', 'SD-SENSITIVE-FIELD-ACCESS', 'SD-KEYSTROKE-CAPTURE', 'SD-CLIPBOARD', 'SD-NETWORK-API-HOOK', 'SD-OBFUSCATION', 'SD-EXFIL-COMBINATION']);
+const NOTABLE_RULES = new Set(['TS-EVAL', 'TS-NEW-FUNCTION', 'TS-SENSITIVE-FIELD-ACCESS', 'TS-KEYSTROKE-CAPTURE', 'TS-CLIPBOARD', 'TS-NETWORK-API-HOOK', 'TS-OBFUSCATION', 'TS-EXFIL-COMBINATION']);
 
 export function printScanSummary(result: ScanResult, verbose: boolean): void {
   const s = result.summary;
@@ -72,7 +72,7 @@ export function registerScan(program: Command): void {
     .command('scan')
     .description('Visit the configured pages in a real browser, compare with the baseline, write reports and send alerts')
     .option('-s, --site <names>', 'only scan these sites (comma separated)')
-    .option('-o, --output <dir>', 'directory for reports (default: .scriptdrift/reports)')
+    .option('-o, --output <dir>', 'directory for reports (default: .thirdsentry/reports)')
     .option('-f, --format <formats>', 'report formats: json, sarif, html (default: reporting.formats)')
     .option('--fail-on <severity>', 'exit with code 1 if a finding is at least this severe (info|low|medium|high|critical|none)')
     .option('--no-alerts', 'do not send alerts even if channels are enabled')

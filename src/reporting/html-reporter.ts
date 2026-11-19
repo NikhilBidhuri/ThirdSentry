@@ -123,12 +123,12 @@ export function renderHtmlReport(report: AnalysisReport, scan?: ScanResult): str
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>ScriptDrift report</title><style>${STYLE}</style></head>
+<title>ThirdSentry report</title><style>${STYLE}</style></head>
 <body><main>
-<h1>ScriptDrift report</h1>
-<p class="muted">Scan <span class="mono">${e(report.scanId)}</span> · ${e(report.scanStartedAt)} → ${e(report.scanFinishedAt)} · scan status <b class="${statusClass}">${e(report.scanStatus)}</b> · ScriptDrift ${e(report.toolVersion)}</p>
+<h1>ThirdSentry report</h1>
+<p class="muted">Scan <span class="mono">${e(report.scanId)}</span> · ${e(report.scanStartedAt)} → ${e(report.scanFinishedAt)} · scan status <b class="${statusClass}">${e(report.scanStatus)}</b> · ThirdSentry ${e(report.toolVersion)}</p>
 <div class="card headline">${e(report.headline)}</div>
-<p class="muted">ScriptDrift reports changes and behaviour worth reviewing. A finding is a reason to look, not proof of compromise; "no findings" does not prove that scripts are safe. See the coverage limitations below.</p>
+<p class="muted">ThirdSentry reports changes and behaviour worth reviewing. A finding is a reason to look, not proof of compromise; "no findings" does not prove that scripts are safe. See the coverage limitations below.</p>
 
 <h2>Summary</h2>
 <div class="grid">

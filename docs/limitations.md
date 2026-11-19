@@ -1,10 +1,10 @@
 # Known limitations
 
-ScriptDrift tries to be explicit about what it cannot see. Every scan report repeats the relevant limitations so that "no findings" is never mistaken for "nothing there".
+ThirdSentry tries to be explicit about what it cannot see. Every scan report repeats the relevant limitations so that "no findings" is never mistaken for "nothing there".
 
 ## Coverage of a single scan
 
-- **Only configured pages, once, without interaction.** ScriptDrift does not click, scroll, log in, accept consent banners or submit forms. Scripts loaded only after interaction, on unlisted pages, or for authenticated users are not observed.
+- **Only configured pages, once, without interaction.** ThirdSentry does not click, scroll, log in, accept consent banners or submit forms. Scripts loaded only after interaction, on unlisted pages, or for authenticated users are not observed.
 - **Variants.** Vendors can serve different code by geography, user agent, time, consent state, A/B bucket or bot detection. A scan observes one variant. Malicious code that deliberately hides from automated or headless browsers may not be served at all.
 - **Timing.** Pages are observed for a bounded time (`timeout`, `networkIdleTimeout`, `settleMs`). Code that loads later, or sends data later, is not seen.
 
@@ -33,7 +33,7 @@ Playwright only partly exposes service workers:
 - **Chromium** reports service worker creation and the requests they make.
 - **Firefox and WebKit** do not expose service-worker network traffic, and responses served from a service worker's cache may hide network activity.
 
-ScriptDrift therefore defaults to `serviceWorkers.strategy: block`:
+ThirdSentry therefore defaults to `serviceWorkers.strategy: block`:
 
 - Registration is refused, so every request is made by the page and observable.
 - Registrations are recorded via an in-page hook, and each registered script is fetched separately (through the same egress proxy) so it is still hashed and tracked over time.
@@ -49,7 +49,7 @@ With `strategy: allow`, service workers run normally. Their script and traffic a
 
 ## Network monitoring
 
-The browser is observed through Playwright and through ScriptDrift's egress proxy. This does **not** capture every possible way data can leave a browser:
+The browser is observed through Playwright and through ThirdSentry's egress proxy. This does **not** capture every possible way data can leave a browser:
 
 - WebRTC data channels and QUIC are disabled at launch so they cannot bypass the proxy; a site that depends on them will behave differently.
 - DNS-based exfiltration (encoding data into hostnames) appears only as requests to unusual hostnames; DNS queries made by the proxy itself are not monitored.
@@ -66,4 +66,4 @@ Mobile profiles are emulation on desktop engines. `mobile-webkit` is not a real 
 
 ## Isolation
 
-In `process` isolation mode the browser runs as the same operating-system user as ScriptDrift. Secrets are kept out of its environment, but it is not filesystem-isolated. For strong isolation use the container deployment in [docker.md](docker.md). See [security.md](security.md).
+In `process` isolation mode the browser runs as the same operating-system user as ThirdSentry. Secrets are kept out of its environment, but it is not filesystem-isolated. For strong isolation use the container deployment in [docker.md](docker.md). See [security.md](security.md).

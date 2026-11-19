@@ -1,6 +1,6 @@
 # Docker deployment
 
-The Docker deployment runs ScriptDrift as four containers, one per trust boundary. It is the recommended way to run scheduled scans on your own infrastructure, because the browser (which executes untrusted third-party code) gets **no** credentials, **no** access to your baselines and **no** route to the internet or your network except through the policy-enforcing egress proxy.
+The Docker deployment runs ThirdSentry as four containers, one per trust boundary. It is the recommended way to run scheduled scans on your own infrastructure, because the browser (which executes untrusted third-party code) gets **no** credentials, **no** access to your baselines and **no** route to the internet or your network except through the policy-enforcing egress proxy.
 
 ```
                  internet
@@ -29,7 +29,7 @@ The Docker deployment runs ScriptDrift as four containers, one per trust boundar
 | `alerter` | `egress` | config (ro), reports (ro), state | `.env` |
 | `tools` | none | config (ro), baselines (rw), reports, state, cache | none |
 
-All containers run as the unprivileged `pwuser`, with a read-only root filesystem, all Linux capabilities dropped, `no-new-privileges`, memory/CPU/PID limits and private `/tmp`. No host directories other than your project's `scriptdrift.yml` and baselines are mounted.
+All containers run as the unprivileged `pwuser`, with a read-only root filesystem, all Linux capabilities dropped, `no-new-privileges`, memory/CPU/PID limits and private `/tmp`. No host directories other than your project's `thirdsentry.yml` and baselines are mounted.
 
 The egress proxy enforces the same per-connection policy as in local mode (see [security.md](security.md)). Because the scanner's network is `internal`, Docker itself refuses any connection that does not go through the proxy, so network restrictions are applied at the container network layer, not only by URL checks. Note that the proxy also blocks the private addresses Docker uses for its networks, so the browser cannot reach the other containers.
 
@@ -40,21 +40,21 @@ The egress proxy enforces the same per-connection policy as in local mode (see [
 1. Build the image (the tag must stay in sync with the pinned Playwright version):
 
    ```bash
-   docker build -t scriptdrift:local .
+   docker build -t thirdsentry:local .
    ```
 
 2. Create a project directory with your configuration and baselines (or use `examples/project`):
 
    ```
    my-monitoring/
-     scriptdrift.yml
-     .scriptdrift/baselines/      # committed, reviewed baselines
+     thirdsentry.yml
+     .thirdsentry/baselines/      # committed, reviewed baselines
    ```
 
    and point the compose file at it:
 
    ```bash
-   export SCRIPTDRIFT_PROJECT_DIR=/srv/my-monitoring
+   export THIRDSENTRY_PROJECT_DIR=/srv/my-monitoring
    ```
 
 3. Put alert credentials in `.env` next to `docker-compose.yml` (see `.env.example`). Only the `alerter` container reads it. Never commit `.env`.
@@ -78,19 +78,19 @@ docker compose run --rm tools baseline        # approve (asks for confirmation; 
 docker compose run --rm -it tools baseline
 ```
 
-`tools` is the only container that can write baselines. The files land in `$SCRIPTDRIFT_PROJECT_DIR/.scriptdrift/baselines/`; commit them to version control after review.
+`tools` is the only container that can write baselines. The files land in `$THIRDSENTRY_PROJECT_DIR/.thirdsentry/baselines/`; commit them to version control after review.
 
 Reports are kept in the `reports` volume. To copy them out:
 
 ```bash
-docker compose run --rm --entrypoint sh tools -c 'cat /work/.scriptdrift/reports/report.html' > report.html
+docker compose run --rm --entrypoint sh tools -c 'cat /work/.thirdsentry/reports/report.html' > report.html
 ```
 
 ## Environment variables
 
 | Variable | Where | Purpose |
 | --- | --- | --- |
-| `SCRIPTDRIFT_PROJECT_DIR` | host (compose) | Directory with `scriptdrift.yml` and `.scriptdrift/baselines`. Default `./examples/project`. |
+| `THIRDSENTRY_PROJECT_DIR` | host (compose) | Directory with `thirdsentry.yml` and `.thirdsentry/baselines`. Default `./examples/project`. |
 | `COMPOSE` | host (`run-scan.sh`) | Override the compose command (default `docker compose`). |
 | Alert variables | `.env` (alerter only) | See [alerts.md](alerts.md#environment-variables). |
 
@@ -109,7 +109,7 @@ See [cron.md](cron.md) for cron and systemd timers.
 - no alert credentials are present in the scanner's environment.
 
 ```bash
-docker build -t scriptdrift:local . && sh tests/docker/verify.sh
+docker build -t thirdsentry:local . && sh tests/docker/verify.sh
 ```
 
 The verification overlay bakes its fixture configuration into a derived image instead of bind-mounting it, so it also runs where host file sharing is restricted; networks, capabilities, read-only filesystems and volumes are those of the real `docker-compose.yml`.

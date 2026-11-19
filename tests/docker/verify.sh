@@ -5,12 +5,12 @@
 #   3. the egress proxy refuses cloud-metadata, internal and disallowed-port destinations,
 #   4. the analyzer container has no network at all,
 #   5. no alert secrets are visible inside the scanner.
-# Requires the image: docker build -t scriptdrift:local .
+# Requires the image: docker build -t thirdsentry:local .
 set -eu
 cd "$(dirname "$0")/../.."
 
-export SCRIPTDRIFT_PROJECT_DIR=./tests/docker/project
-export COMPOSE_PROJECT_NAME=scriptdrift-verify
+export THIRDSENTRY_PROJECT_DIR=./tests/docker/project
+export COMPOSE_PROJECT_NAME=thirdsentry-verify
 DC="docker compose -f docker-compose.yml -f tests/docker/compose.verify.yml"
 fail() { echo "FAIL: $*" >&2; $DC down -v >/dev/null 2>&1 || true; exit 1; }
 pass() { echo "PASS: $*"; }
@@ -22,10 +22,10 @@ $DC up -d --no-build fixture egress-proxy
 # 1. Pipeline
 $DC run --rm -T scanner || fail "scanner run failed"
 status=0
-$DC run --rm -T analyzer >/tmp/scriptdrift-verify-analyze.txt 2>&1 || status=$?
-[ "$status" -eq 0 ] || { cat /tmp/scriptdrift-verify-analyze.txt; fail "analyzer exit code $status"; }
-grep -q "complete" /tmp/scriptdrift-verify-analyze.txt || fail "scan not complete"
-grep -q "vendor.js" /tmp/scriptdrift-verify-analyze.txt || fail "vendor.js not discovered"
+$DC run --rm -T analyzer >/tmp/thirdsentry-verify-analyze.txt 2>&1 || status=$?
+[ "$status" -eq 0 ] || { cat /tmp/thirdsentry-verify-analyze.txt; fail "analyzer exit code $status"; }
+grep -q "complete" /tmp/thirdsentry-verify-analyze.txt || fail "scan not complete"
+grep -q "vendor.js" /tmp/thirdsentry-verify-analyze.txt || fail "vendor.js not discovered"
 pass "pipeline produced a complete scan with the vendor script"
 
 NODE_FETCH='fetch(process.argv[1], { signal: AbortSignal.timeout(5000) }).then(() => process.exit(0), () => process.exit(7))'
@@ -52,7 +52,7 @@ fi
 pass "analyzer has no network access"
 
 # 5. No secrets in the scanner environment
-if SCRIPTDRIFT_SLACK_WEBHOOK=should-not-leak $DC run --rm -T --entrypoint node scanner -e 'process.exit(Object.keys(process.env).some(k=>k.startsWith("SCRIPTDRIFT_")||k==="GITHUB_TOKEN")?7:0)'; then
+if THIRDSENTRY_SLACK_WEBHOOK=should-not-leak $DC run --rm -T --entrypoint node scanner -e 'process.exit(Object.keys(process.env).some(k=>k.startsWith("THIRDSENTRY_")||k==="GITHUB_TOKEN")?7:0)'; then
   pass "scanner environment contains no alert credentials"
 else
   fail "scanner environment contains alert credentials"

@@ -8,12 +8,12 @@
 # real docker-compose.yml are kept unchanged.
 
 x-verify-image: &verify-image
-  image: scriptdrift:verify
+  image: thirdsentry:verify
   build:
     context: ./tests/docker
     dockerfile_inline: |
-      FROM scriptdrift:local
-      COPY --chown=pwuser:pwuser project/scriptdrift.yml /work/scriptdrift.yml
+      FROM thirdsentry:local
+      COPY --chown=pwuser:pwuser project/thirdsentry.yml /work/thirdsentry.yml
       COPY --chown=pwuser:pwuser fixture-server.mjs /fixture/server.mjs
 
 services:
@@ -38,16 +38,16 @@ services:
     <<: *verify-image
     volumes: !override
       - evidence:/evidence:ro
-      - reports:/work/.scriptdrift/reports
-      - state:/work/.scriptdrift/state
-      - cache:/work/.scriptdrift/cache
-      - baselines:/work/.scriptdrift/baselines:ro
+      - reports:/work/.thirdsentry/reports
+      - state:/work/.thirdsentry/state
+      - cache:/work/.thirdsentry/cache
+      - baselines:/work/.thirdsentry/baselines:ro
 
   alerter:
     <<: *verify-image
     volumes: !override
-      - reports:/work/.scriptdrift/reports:ro
-      - state:/work/.scriptdrift/state
+      - reports:/work/.thirdsentry/reports:ro
+      - state:/work/.thirdsentry/state
 
 volumes:
   baselines:

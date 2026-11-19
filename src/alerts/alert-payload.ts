@@ -31,7 +31,7 @@ export interface AlertFinding {
 
 export interface AlertPayload {
   readonly schemaVersion: 1;
-  readonly kind: 'scriptdrift-alert';
+  readonly kind: 'thirdsentry-alert';
   readonly generatedAt: string;
   readonly scanId: string;
   readonly scanStatus: string;
@@ -48,13 +48,13 @@ export interface AlertPayload {
 /** Evidence safe to send externally: drop code excerpts from behaviour matches. */
 function alertEvidence(evidence: readonly Evidence[]): Evidence[] {
   return evidence
-    .filter((e) => !/^SD-[A-Z-]+ at line \d+$/.test(e.label))
+    .filter((e) => !/^TS-[A-Z-]+ at line \d+$/.test(e.label))
     .map((e) => ({ label: e.label, value: e.value.length > 300 ? `${e.value.slice(0, 300)}…` : e.value }))
     .slice(0, 12);
 }
 
 export function toAlertFinding(f: Finding): AlertFinding {
-  const behaviour = f.evidence.filter((e) => /^SD-[A-Z-]+ at line \d+$/.test(e.label)).map((e) => e.label);
+  const behaviour = f.evidence.filter((e) => /^TS-[A-Z-]+ at line \d+$/.test(e.label)).map((e) => e.label);
   return {
     id: f.id,
     title: f.title,
@@ -107,7 +107,7 @@ export function buildAlertPayload(report: AnalysisReport, findings: readonly Fin
   const listed = findings.slice(0, options.maxFindings);
   return {
     schemaVersion: 1,
-    kind: 'scriptdrift-alert',
+    kind: 'thirdsentry-alert',
     generatedAt: (options.now ?? new Date()).toISOString(),
     scanId: report.scanId,
     scanStatus: report.scanStatus,
@@ -131,5 +131,5 @@ export function filterPayload(payload: AlertPayload, minSeverity: Severity | und
 
 export function subjectLine(payload: AlertPayload): string {
   const n = payload.findings.length + payload.omitted;
-  return `[ScriptDrift] ${n} finding${n === 1 ? '' : 's'} (highest: ${payload.highestSeverity}) on ${payload.sites.join(', ')}`;
+  return `[ThirdSentry] ${n} finding${n === 1 ? '' : 's'} (highest: ${payload.highestSeverity}) on ${payload.sites.join(', ')}`;
 }

@@ -15,7 +15,7 @@ export interface GithubTarget {
   readonly maxIssuesPerRun: number;
 }
 
-const MARKER = (id: string): string => `<!-- scriptdrift-finding: ${id} -->`;
+const MARKER = (id: string): string => `<!-- thirdsentry-finding: ${id} -->`;
 
 function headers(token: string): Record<string, string> {
   return {
@@ -52,7 +52,7 @@ export function issueBody(f: AlertFinding, payload: AlertPayload): string {
     '',
     `_Scan ${payload.scanId} · report: ${mdEscape(payload.reportLocation)} · finding ${f.id}_`,
     '',
-    '_ScriptDrift reports changes worth reviewing; this is not proof of compromise._',
+    '_ThirdSentry reports changes worth reviewing; this is not proof of compromise._',
   ];
   return lines.filter((l, i, all) => !(l === '' && all[i - 1] === '')).join('\n');
 }
@@ -74,7 +74,7 @@ async function existingFindingIds(target: GithubTarget, api: URL, timeoutMs: num
       throw new AlertDeliveryError('GitHub returned an unexpected response while listing issues');
     }
     for (const issue of issues) {
-      for (const m of (issue.body ?? '').matchAll(/<!-- scriptdrift-finding: (SD-[0-9a-f]{12}) -->/g)) ids.add(m[1] as string);
+      for (const m of (issue.body ?? '').matchAll(/<!-- thirdsentry-finding: (TS-[0-9a-f]{12}) -->/g)) ids.add(m[1] as string);
     }
     if (issues.length < 100) break;
   }
@@ -108,7 +108,7 @@ export async function createGithubIssues(
       {
         url: url.toString(),
         headers: headers(target.token),
-        body: JSON.stringify({ title: `[ScriptDrift] ${f.severity.toUpperCase()}: ${f.title} (${f.site})`.slice(0, 250), body: issueBody(f, payload), labels: target.labels }),
+        body: JSON.stringify({ title: `[ThirdSentry] ${f.severity.toUpperCase()}: ${f.title} (${f.site})`.slice(0, 250), body: issueBody(f, payload), labels: target.labels }),
         timeoutMs: options.timeoutMs,
       },
       options.fetchImpl,

@@ -133,7 +133,7 @@ export function site(resources: ScriptResource[], options: { pages?: PageResult[
 export function scan(sites: SiteResult[], scanId = '20260101T000000Z-test0001'): ScanResult {
   return {
     schemaVersion: 1,
-    kind: 'scriptdrift-scan',
+    kind: 'thirdsentry-scan',
     scanId,
     toolVersion: '0.0.0',
     startedAt: '2026-01-01T00:00:00.000Z',

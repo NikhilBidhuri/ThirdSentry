@@ -1,7 +1,7 @@
 import { BlockList, isIP, isIPv4 } from 'node:net';
 
 /**
- * IP address policy used by every network path that ScriptDrift controls
+ * IP address policy used by every network path that ThirdSentry controls
  * (browser egress proxy, CSP fetcher). Any address that is not a globally
  * routable unicast address is rejected unless explicitly allowed.
  */

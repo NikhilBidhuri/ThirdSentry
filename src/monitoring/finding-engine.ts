@@ -70,7 +70,7 @@ function behaviourSignals(c: Change, ctx: FindingContext): { signals: Signal[]; 
 }
 
 export function fingerprint(parts: ReadonlyArray<string | null | undefined>): string {
-  return `SD-${createHash('sha256').update(parts.map((p) => p ?? '').join('\u0000')).digest('hex').slice(0, 12)}`;
+  return `TS-${createHash('sha256').update(parts.map((p) => p ?? '').join('\u0000')).digest('hex').slice(0, 12)}`;
 }
 
 function resourceLabel(c: Change): string {
@@ -92,7 +92,7 @@ function previousHashOf(c: Change): string | null {
 }
 
 const INVESTIGATE_SCRIPT =
-  'Compare the new version with the previous one (scriptdrift diff), check the vendor\'s changelog or status page, and confirm the change with the vendor if it is unexpected. If it is legitimate, approve it with "scriptdrift baseline --approve <finding-id>".';
+  'Compare the new version with the previous one (thirdsentry diff), check the vendor\'s changelog or status page, and confirm the change with the vendor if it is unexpected. If it is legitimate, approve it with "thirdsentry baseline --approve <finding-id>".';
 
 interface Template {
   title: string;
@@ -129,7 +129,7 @@ function template(c: Change, ctx: FindingContext, sensitive: boolean): Template 
       return {
         title: 'Script reformatted (code unchanged)',
         reason: `The bytes of ${label} changed, but after parsing and normalising whitespace and comments the code is identical to an approved version.`,
-        action: 'No action needed. Approve the new bytes to stop seeing this: scriptdrift baseline --approve <finding-id>.',
+        action: 'No action needed. Approve the new bytes to stop seeing this: thirdsentry baseline --approve <finding-id>.',
         signals: [s('formatting-only')],
         confidence: 'high',
       };
@@ -150,7 +150,7 @@ function template(c: Change, ctx: FindingContext, sensitive: boolean): Template 
       return {
         title: 'Approved script no longer loads',
         reason: `${label} was in the baseline but was not observed on ${c.pages.join(', ')} even though ${c.pages.length === 1 ? 'that page was' : 'those pages were'} scanned completely.`,
-        action: 'If the removal is intended, approve it with scriptdrift baseline --approve <finding-id>. Otherwise check whether the page or a tag manager changed.',
+        action: 'If the removal is intended, approve it with thirdsentry baseline --approve <finding-id>. Otherwise check whether the page or a tag manager changed.',
         signals: [s('resource-removed')],
         confidence: 'medium',
       };
@@ -189,7 +189,7 @@ function template(c: Change, ctx: FindingContext, sensitive: boolean): Template 
       signals.unshift(s('content-unavailable'));
       return {
         title: 'Script content could not be verified',
-        reason: `${label} was observed but its content could not be captured (${c.details.contentStatus}), so ScriptDrift cannot confirm it still matches the approved version.`,
+        reason: `${label} was observed but its content could not be captured (${c.details.contentStatus}), so ThirdSentry cannot confirm it still matches the approved version.`,
         action: 'Check the scan issues and blocked connections. If the script is now larger than limits.maxResourceBytes, raise the limit.',
         signals,
         confidence: 'low',

@@ -21,7 +21,7 @@ const B = 'https://cdn.vendor-b.example/b.js';
 describe('baseline manager', () => {
   it('creates a baseline with hashes, domains and an approval record', () => {
     const b = createBaseline(site([scriptResource(A, 'a()')]), { scanId: 's1', reason: 'initial review' });
-    expect(b.kind).toBe('scriptdrift-baseline');
+    expect(b.kind).toBe('thirdsentry-baseline');
     expect(b.resources[0]?.approvedHashes[0]?.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(b.domains.scripts).toEqual(['vendor-a.example']);
     expect(b.approvals[0]).toMatchObject({ scope: 'initial', scanId: 's1', reason: 'initial review' });

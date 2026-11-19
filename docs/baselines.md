@@ -1,11 +1,11 @@
 # Baseline management
 
-A **baseline** is the set of scripts, script hashes and domains that a person has reviewed and approved for a site. Every scan is compared with it. ScriptDrift **never approves anything automatically**: scans never write baselines, and every baseline change goes through the explicit `scriptdrift baseline` command.
+A **baseline** is the set of scripts, script hashes and domains that a person has reviewed and approved for a site. Every scan is compared with it. ThirdSentry **never approves anything automatically**: scans never write baselines, and every baseline change goes through the explicit `thirdsentry baseline` command.
 
 ## Where baselines live
 
 ```
-.scriptdrift/baselines/<site>/baseline.json
+.thirdsentry/baselines/<site>/baseline.json
 ```
 
 Baselines are stable, sorted JSON designed to be committed and reviewed in pull requests. Each file contains:
@@ -24,8 +24,8 @@ Baselines are validated on every load (schema, hash format, duplicate identities
 ## Creating the first baseline
 
 ```bash
-npx scriptdrift scan           # look at what your pages load
-npx scriptdrift baseline       # shows a summary and asks for confirmation
+npx thirdsentry scan           # look at what your pages load
+npx thirdsentry baseline       # shows a summary and asks for confirmation
 ```
 
 Review the scan output first. If a script you do not recognise is listed, find out where it comes from **before** approving it: approving makes it "expected".
@@ -37,11 +37,11 @@ Only pages that were scanned **completely** are approved. If the scan was partia
 On the next scan, every difference becomes a finding with the previous and current hashes, an explanation and a recommended action. The baseline is not modified. Findings remain until you approve the change or the change goes away.
 
 ```bash
-npx scriptdrift diff                     # list findings again, with code diffs where available
-npx scriptdrift diff --finding SD-1a2b3c4d5e6f
+npx thirdsentry diff                     # list findings again, with code diffs where available
+npx thirdsentry diff --finding TS-1a2b3c4d5e6f
 ```
 
-Code diffs require both versions of the script. Script bodies are **not** stored by default (privacy); enable `retention.storeScriptContent: true` to keep them in the git-ignored `.scriptdrift/cache/content/` so that future changes can be shown as code diffs. Without retained content, ScriptDrift still compares hashes, sizes and behaviour indicators.
+Code diffs require both versions of the script. Script bodies are **not** stored by default (privacy); enable `retention.storeScriptContent: true` to keep them in the git-ignored `.thirdsentry/cache/content/` so that future changes can be shown as code diffs. Without retained content, ThirdSentry still compares hashes, sizes and behaviour indicators.
 
 ## Approving changes
 
@@ -50,7 +50,7 @@ After reviewing, approve in one of two ways.
 **Selected findings only** (recommended):
 
 ```bash
-npx scriptdrift baseline --approve SD-1a2b3c4d5e6f,SD-9f8e7d6c5b4a --reason "Vendor A release 2.4, confirmed with vendor"
+npx thirdsentry baseline --approve TS-1a2b3c4d5e6f,TS-9f8e7d6c5b4a --reason "Vendor A release 2.4, confirmed with vendor"
 ```
 
 Only the resources or domains behind those findings change; everything else in the baseline stays as it is.
@@ -58,7 +58,7 @@ Only the resources or domains behind those findings change; everything else in t
 **Everything in the latest scan**:
 
 ```bash
-npx scriptdrift baseline --reason "Quarterly review"
+npx thirdsentry baseline --reason "Quarterly review"
 ```
 
 This replaces the approved state of the completely scanned pages with what the scan observed. Resources of pages that were not scanned completely are kept.

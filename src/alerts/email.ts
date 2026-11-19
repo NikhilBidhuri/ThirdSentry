@@ -26,7 +26,7 @@ export function emailText(payload: AlertPayload): string {
     lines.push(`  Why: ${f.why}`, `  Next: ${f.recommendedAction}`, '');
   }
   if (payload.omitted > 0) lines.push(`${payload.omitted} more finding(s) are listed in the report.`);
-  lines.push(`Scan ${payload.scanId} (${payload.scanStatus}). Report: ${payload.reportLocation}`, '', 'ScriptDrift reports changes worth reviewing; a finding is not proof of compromise.');
+  lines.push(`Scan ${payload.scanId} (${payload.scanStatus}). Report: ${payload.reportLocation}`, '', 'ThirdSentry reports changes worth reviewing; a finding is not proof of compromise.');
   return lines.join('\n');
 }
 

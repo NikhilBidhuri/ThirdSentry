@@ -55,7 +55,7 @@ function headline(report: Omit<AnalysisReport, 'headline'>): string {
   const noBaseline = report.sites.filter((s) => !s.baseline.exists).map((s) => s.name);
   const parts: string[] = [];
   if (report.scanStatus !== 'complete') parts.push('The scan was incomplete, so some changes may have been missed.');
-  if (noBaseline.length > 0) parts.push(`No approved baseline yet for ${noBaseline.join(', ')}: review the scan and run "scriptdrift baseline".`);
+  if (noBaseline.length > 0) parts.push(`No approved baseline yet for ${noBaseline.join(', ')}: review the scan and run "thirdsentry baseline".`);
   const important = active.filter((f) => SEVERITY_ORDER[f.severity] >= SEVERITY_ORDER.medium);
   if (active.length === 0 && noBaseline.length < report.sites.length) parts.unshift('No changes compared with the approved baseline.');
   else if (important.length === 0 && active.length > 0) parts.unshift(`${active.length} low-risk change(s) to review; nothing looks urgent.`);
@@ -138,7 +138,7 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
   const sorted = sortFindings(suppression.findings);
   const base: Omit<AnalysisReport, 'headline'> = {
     schemaVersion: 1,
-    kind: 'scriptdrift-report',
+    kind: 'thirdsentry-report',
     generatedAt: now.toISOString(),
     toolVersion: toolVersion(),
     scanId: scan.scanId,

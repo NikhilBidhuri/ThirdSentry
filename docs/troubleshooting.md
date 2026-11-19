@@ -3,13 +3,13 @@
 ## The browser does not start
 
 **`Executable doesn't exist at ...ms-playwright...`**
-The Playwright browser build is not installed. Run `npx playwright install chromium` (and `firefox`/`webkit` if you use those profiles). In the default `process` isolation mode the worker receives a scrubbed environment; ScriptDrift passes `PLAYWRIGHT_BROWSERS_PATH` explicitly, so set that variable if you installed browsers to a custom location.
+The Playwright browser build is not installed. Run `npx playwright install chromium` (and `firefox`/`webkit` if you use those profiles). In the default `process` isolation mode the worker receives a scrubbed environment; ThirdSentry passes `PLAYWRIGHT_BROWSERS_PATH` explicitly, so set that variable if you installed browsers to a custom location.
 
 **Linux: missing shared libraries** (`libnss3.so`, `libatk-1.0.so`, ...)
 Run `npx playwright install --with-deps chromium`, or use the Docker image.
 
 **Linux: `No usable sandbox!` / Chromium sandbox errors**
-ScriptDrift keeps Chromium's renderer sandbox enabled (`security.isolation.chromiumSandbox: true`). The sandbox needs unprivileged user namespaces or a setuid sandbox helper. Options, in order of preference:
+ThirdSentry keeps Chromium's renderer sandbox enabled (`security.isolation.chromiumSandbox: true`). The sandbox needs unprivileged user namespaces or a setuid sandbox helper. Options, in order of preference:
 
 1. Enable unprivileged user namespaces on the host (`sysctl kernel.unprivileged_userns_clone=1` on older Debian kernels; on Ubuntu 23.10+ `sysctl kernel.apparmor_restrict_unprivileged_userns=0` or an AppArmor profile that allows them for the browser).
 2. Run the scanner in the provided [Docker setup](docker.md). Its hardened scanner container cannot start Chromium's sandbox, so it runs with `--no-chromium-sandbox` and relies on the container boundary (no capabilities, read-only root filesystem, no network except the egress proxy, no secrets).
@@ -19,14 +19,14 @@ ScriptDrift keeps Chromium's renderer sandbox enabled (`security.isolation.chrom
 Playwright's WebKit needs extra system libraries (on Linux: `npx playwright install --with-deps webkit`). On some Windows editions WebKit cannot start at all; use Chromium or Firefox profiles there, or run in Docker.
 
 **Docker Desktop: `docker compose run` hangs at "Creating"**
-Bind-mounting files from the host (your `scriptdrift.yml` and baselines) requires Docker Desktop file sharing for that drive or folder. Enable it in Docker Desktop settings (Resources → File sharing) or run from a directory that is already shared.
+Bind-mounting files from the host (your `thirdsentry.yml` and baselines) requires Docker Desktop file sharing for that drive or folder. Enable it in Docker Desktop settings (Resources → File sharing) or run from a directory that is already shared.
 
 **`Compiled browser worker not found`**
-You are running ScriptDrift from TypeScript sources. Run `npm run build` first.
+You are running ThirdSentry from TypeScript sources. Run `npm run build` first.
 
 ## A page is reported as `partial` or `failed`
 
-ScriptDrift never reports an incomplete page as complete. Look at the page issues in the scan output:
+ThirdSentry never reports an incomplete page as complete. Look at the page issues in the scan output:
 
 | Code | Meaning | What to do |
 | --- | --- | --- |
@@ -59,4 +59,4 @@ Third-party scripts often vary by request: A/B tests, geography, consent state, 
 
 ## Development: Vitest reports "failed to find the runner" on Windows
 
-This happens when the working directory's drive letter is lower case (`c:\...`) and Vitest loads two copies of itself. Run the tests from a shell whose current directory uses an upper-case drive letter (`C:\...`), for example `cd C:\path\to\scriptdrift` in PowerShell.
+This happens when the working directory's drive letter is lower case (`c:\...`) and Vitest loads two copies of itself. Run the tests from a shell whose current directory uses an upper-case drive letter (`C:\...`), for example `cd C:\path\to\thirdsentry` in PowerShell.

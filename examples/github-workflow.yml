@@ -1,6 +1,6 @@
-# .github/workflows/scriptdrift.yml in the repository that holds scriptdrift.yml and
-# the reviewed baselines (.scriptdrift/baselines/). See docs/github-actions.md.
-name: ScriptDrift Security Monitoring
+# .github/workflows/thirdsentry.yml in the repository that holds thirdsentry.yml and
+# the reviewed baselines (.thirdsentry/baselines/). See docs/github-actions.md.
+name: ThirdSentry Security Monitoring
 
 on:
   schedule:
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [scriptdrift.yml, .scriptdrift/baselines/**]
+    paths: [thirdsentry.yml, .thirdsentry/baselines/**]
 
 # Least privilege: read the repository, upload SARIF. Add "issues: write" only
 # if alerts.github is enabled.
@@ -19,7 +19,7 @@ permissions:
   security-events: write
 
 concurrency:
-  group: scriptdrift
+  group: thirdsentry
   cancel-in-progress: false
 
 jobs:
@@ -35,11 +35,11 @@ jobs:
         with:
           node-version: 22
 
-      # Replace <owner>/scriptdrift@<ref> with the repository and a pinned tag or commit SHA.
-      - uses: <owner>/scriptdrift@<ref>
+      # Replace <owner>/thirdsentry@<ref> with the repository and a pinned tag or commit SHA.
+      - uses: <owner>/thirdsentry@<ref>
         with:
           fail-on: high
         env:
           # Alert credentials come from repository secrets; never commit them.
-          SCRIPTDRIFT_SLACK_WEBHOOK: ${{ secrets.SCRIPTDRIFT_SLACK_WEBHOOK }}
-          SCRIPTDRIFT_REPORT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          THIRDSENTRY_SLACK_WEBHOOK: ${{ secrets.THIRDSENTRY_SLACK_WEBHOOK }}
+          THIRDSENTRY_REPORT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

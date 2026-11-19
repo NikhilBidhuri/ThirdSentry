@@ -1,13 +1,13 @@
 /**
- * Commented configuration template written by `scriptdrift init`.
+ * Commented configuration template written by `thirdsentry init`.
  * Every option shown here is validated by src/config/schema.ts.
  */
-export const CONFIG_TEMPLATE = `# ScriptDrift configuration
+export const CONFIG_TEMPLATE = `# ThirdSentry configuration
 # Docs: docs/configuration.md
 version: 1
 
 # Where baselines, reports and state are stored (relative to this file).
-storageDir: .scriptdrift
+storageDir: .thirdsentry
 
 defaults:
   browser:

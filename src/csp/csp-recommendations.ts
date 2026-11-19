@@ -102,7 +102,7 @@ export const RECOMMENDATIONS: Record<CspCheckId, Recommendation> = {
   'strict-dynamic-ok': {
     level: 'info',
     title: "'strict-dynamic' is used with nonces/hashes",
-    explanation: "This is the recommended modern setup. Scripts trusted via nonce/hash may load further scripts. Host allowlists in the same directive are ignored by CSP3 browsers and only serve as a fallback for older browsers. Note that every script loaded by a trusted script is also trusted, so third-party loaders you trust can still pull in changed code — which is what ScriptDrift monitors.",
+    explanation: "This is the recommended modern setup. Scripts trusted via nonce/hash may load further scripts. Host allowlists in the same directive are ignored by CSP3 browsers and only serve as a fallback for older browsers. Note that every script loaded by a trusted script is also trusted, so third-party loaders you trust can still pull in changed code — which is what ThirdSentry monitors.",
     recommendation: 'Keep nonces unpredictable and unique per response.',
   },
   'allowlist-only': {
@@ -121,7 +121,7 @@ export const RECOMMENDATIONS: Record<CspCheckId, Recommendation> = {
     level: 'warning',
     title: 'Very broad script allowlist',
     explanation: 'Every allowed host is a party that can run code on your pages; long allowlists are hard to review and rarely minimal.',
-    recommendation: 'Remove hosts that are no longer used (compare with the scripts ScriptDrift observes) or move to nonces.',
+    recommendation: 'Remove hosts that are no longer used (compare with the scripts ThirdSentry observes) or move to nonces.',
   },
   'unsafe-hashes': {
     level: 'warning',

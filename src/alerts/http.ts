@@ -29,7 +29,7 @@ export async function sendHttp(request: HttpRequest, fetchImpl: FetchLike = fetc
   try {
     response = await fetchImpl(request.url, {
       method: request.method ?? 'POST',
-      headers: { 'user-agent': `ScriptDrift/${toolVersion()}`, ...request.headers },
+      headers: { 'user-agent': `ThirdSentry/${toolVersion()}`, ...request.headers },
       ...(request.body !== undefined ? { body: request.body } : {}),
       redirect: 'error',
       signal: AbortSignal.timeout(request.timeoutMs),

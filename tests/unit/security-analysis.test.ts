@@ -30,17 +30,17 @@ describe('behaviour-aware findings', () => {
     const s = site([after]);
     const [finding] = buildFindings(compareSite(s, base).changes, { site: s });
     expect(finding?.kind).toBe('resource-modified');
-    expect(finding?.signals.map((x) => x.id)).toEqual(expect.arrayContaining(['new-rule:SD-SENSITIVE-FIELD-ACCESS', 'new-rule:SD-EXFIL-COMBINATION']));
+    expect(finding?.signals.map((x) => x.id)).toEqual(expect.arrayContaining(['new-rule:TS-SENSITIVE-FIELD-ACCESS', 'new-rule:TS-EXFIL-COMBINATION']));
     expect(['high', 'critical']).toContain(finding?.severity);
     expect(finding?.category).toBe('high-priority');
-    expect(finding?.evidence.some((e) => e.label.startsWith('SD-SENSITIVE-FIELD-ACCESS at line'))).toBe(true);
+    expect(finding?.evidence.some((e) => e.label.startsWith('TS-SENSITIVE-FIELD-ACCESS at line'))).toBe(true);
   });
 
   it('does not escalate a routine update of an analytics script whose behaviour is unchanged', () => {
     const before = analyzed(URL_A, BENIGN_ANALYTICS);
     const after = analyzed(URL_A, BENIGN_ANALYTICS.replace("'pageview'", "'page_view'"));
     const base = createBaseline(site([before]), { scanId: 's1' });
-    expect(base.resources[0]?.indicators?.['SD-COOKIE-ACCESS']).toBeGreaterThan(0);
+    expect(base.resources[0]?.indicators?.['TS-COOKIE-ACCESS']).toBeGreaterThan(0);
     const s = site([after]);
     const [finding] = buildFindings(compareSite(s, base).changes, { site: s });
     expect(finding?.signals.filter((x) => x.id.includes('rule:'))).toEqual([]);
@@ -64,7 +64,7 @@ describe('behaviour-aware findings', () => {
     const base = createBaseline(site([before]), { scanId: 's1' });
     const s = site([after]);
     const changes = compareSite(s, base).changes;
-    const strong = buildFindings(changes, { site: s, rules: { 'SD-EVAL': { enabled: true, weight: 60, ignoreResources: [] } } });
+    const strong = buildFindings(changes, { site: s, rules: { 'TS-EVAL': { enabled: true, weight: 60, ignoreResources: [] } } });
     expect(strong[0]?.score).toBeGreaterThanOrEqual(80);
     const off = analyzeJavaScript('eval(x)', { rules: [] });
     expect(off.counts).toEqual({});
@@ -102,20 +102,20 @@ describe('suppressions and finding state', () => {
   }
 
   it('requires a documented reason in configuration', () => {
-    const text = `sites: [{ name: a, url: 'https://a.example' }]\nsuppressions:\n  - rule: SD-EVAL\n`;
+    const text = `sites: [{ name: a, url: 'https://a.example' }]\nsuppressions:\n  - rule: TS-EVAL\n`;
     expect(() => parseConfigText(text, 'x.yml')).toThrow(/reason/);
     expect(() => parseConfigText(`sites: [{ name: a, url: 'https://a.example' }]\nsuppressions:\n  - reason: no matcher\n`, 'x.yml')).toThrow(/at least one/);
-    expect(() => parseConfigText(`sites: [{ name: a, url: 'https://a.example' }]\nrules:\n  SD-NOPE: { enabled: false }\n`, 'x.yml')).toThrow(/unknown rule/);
+    expect(() => parseConfigText(`sites: [{ name: a, url: 'https://a.example' }]\nrules:\n  TS-NOPE: { enabled: false }\n`, 'x.yml')).toThrow(/unknown rule/);
   });
 
   it('a rule suppression removes only that rule\'s contribution', () => {
     const findings = sampleFindings();
     const before = findings[0];
-    const { findings: out, applied } = applySuppressions(findings, [{ rule: 'SD-EVAL', reason: 'vendor uses eval for templates', resource: 'https://cdn.vendor.example/*' }]);
+    const { findings: out, applied } = applySuppressions(findings, [{ rule: 'TS-EVAL', reason: 'vendor uses eval for templates', resource: 'https://cdn.vendor.example/*' }]);
     expect(applied).toBe(1);
     expect(out[0]?.suppressed).toBeUndefined();
-    expect(out[0]?.signals.some((s) => s.id === 'new-rule:SD-EVAL')).toBe(false);
-    expect(out[0]?.signals.some((s) => s.id === 'new-rule:SD-COOKIE-ACCESS')).toBe(true);
+    expect(out[0]?.signals.some((s) => s.id === 'new-rule:TS-EVAL')).toBe(false);
+    expect(out[0]?.signals.some((s) => s.id === 'new-rule:TS-COOKIE-ACCESS')).toBe(true);
     expect(out[0]?.score).toBeLessThan(before?.score ?? 0);
   });
 
@@ -149,7 +149,7 @@ describe('suppressions and finding state', () => {
   });
 
   it('forgets findings not seen for a long time', () => {
-    const state: FindingState = { version: 1, findings: { 'SD-000000000000': { firstSeen: '2020-01-01T00:00:00Z', lastSeen: '2020-01-01T00:00:00Z', timesSeen: 1, severity: 'low' } } };
+    const state: FindingState = { version: 1, findings: { 'TS-000000000000': { firstSeen: '2020-01-01T00:00:00Z', lastSeen: '2020-01-01T00:00:00Z', timesSeen: 1, severity: 'low' } } };
     trackFindings([], state, new Date('2026-01-01'));
     expect(state.findings).toEqual({});
   });

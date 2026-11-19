@@ -14,7 +14,7 @@ export function referencedVariables(value: string): string[] {
 export function resolveEnv(value: string, env: NodeJS.ProcessEnv, setting: string): string {
   const missing = referencedVariables(value).filter((name) => !env[name]);
   if (missing.length > 0) {
-    throw new ConfigError(`${setting} references environment variable(s) that are not set: ${missing.join(', ')}`, 'Set them in the environment of the alert publisher (never in scriptdrift.yml).');
+    throw new ConfigError(`${setting} references environment variable(s) that are not set: ${missing.join(', ')}`, 'Set them in the environment of the alert publisher (never in thirdsentry.yml).');
   }
   return value.replace(PLACEHOLDER, (_m, name: string) => env[name] ?? '');
 }

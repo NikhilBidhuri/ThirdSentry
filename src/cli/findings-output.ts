@@ -23,7 +23,7 @@ export function printReport(report: AnalysisReport, verbose: boolean): void {
   print(color.bold('Summary: ') + report.headline);
   for (const site of report.sites) {
     if (!site.baseline.exists) {
-      print(color.yellow(`  ${site.name}: no baseline (${site.baseline.path}). Run "scriptdrift baseline" after reviewing this scan.`));
+      print(color.yellow(`  ${site.name}: no baseline (${site.baseline.path}). Run "thirdsentry baseline" after reviewing this scan.`));
       continue;
     }
     print(

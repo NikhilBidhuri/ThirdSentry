@@ -1,6 +1,6 @@
-# Contributing to ScriptDrift
+# Contributing to ThirdSentry
 
-Thank you for helping. ScriptDrift is security tooling, so correctness, honesty about limitations and safe defaults matter more than feature count.
+Thank you for helping. ThirdSentry is security tooling, so correctness, honesty about limitations and safe defaults matter more than feature count.
 
 ## Development setup
 
@@ -20,7 +20,7 @@ On Windows, run the tests from a shell whose working directory uses an upper-cas
 Docker verification (Linux or Docker Desktop):
 
 ```bash
-docker build -t scriptdrift:local . && sh tests/docker/verify.sh
+docker build -t thirdsentry:local . && sh tests/docker/verify.sh
 ```
 
 ## Ground rules
@@ -35,7 +35,7 @@ docker build -t scriptdrift:local . && sh tests/docker/verify.sh
 
 ## Adding a detection rule
 
-1. Add the rule to `RULES` in `src/analysis/indicator-rules.ts`: id (`SD-...`), name, description, severity, confidence, role, explanation, investigation steps, false-positive notes, visitors.
+1. Add the rule to `RULES` in `src/analysis/indicator-rules.ts`: id (`TS-...`), name, description, severity, confidence, role, explanation, investigation steps, false-positive notes, visitors.
 2. Add positive **and** negative cases to `tests/unit/ast-rules.test.ts`, and check `BENIGN_ANALYTICS` and `MINIFIED_LIBRARY` do not start matching unexpectedly.
 3. Regenerate the rules table in `docs/rules.md`.
 

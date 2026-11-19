@@ -341,7 +341,7 @@ export function processEvidence(evidence: ScanEvidence, sites: readonly Resolved
   );
   const result: ScanResult = {
     schemaVersion: 1,
-    kind: 'scriptdrift-scan',
+    kind: 'thirdsentry-scan',
     scanId: evidence.scanId,
     toolVersion: evidence.toolVersion,
     startedAt: evidence.startedAt,

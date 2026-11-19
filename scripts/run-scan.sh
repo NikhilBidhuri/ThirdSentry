@@ -1,5 +1,5 @@
 #!/bin/sh
-# Run one ScriptDrift scan with the container pipeline (see docs/docker.md):
+# Run one ThirdSentry scan with the container pipeline (see docs/docker.md):
 #   egress-proxy (long-running) -> scanner -> analyzer -> alerter
 #
 # Exit code is the analyzer's: 0 ok, 1 findings over threshold, 3 incomplete scan,
@@ -13,7 +13,7 @@ COMPOSE="${COMPOSE:-docker compose}"
 $COMPOSE up -d egress-proxy
 
 if ! $COMPOSE run --rm scanner; then
-  echo "scriptdrift: browser collection failed" >&2
+  echo "thirdsentry: browser collection failed" >&2
   exit 4
 fi
 
@@ -24,11 +24,11 @@ case "$status" in
   0|1|3)
     # Reports were written; send alerts for new findings.
     if ! $COMPOSE run --rm alerter; then
-      echo "scriptdrift: alert delivery failed (reports are unaffected)" >&2
+      echo "thirdsentry: alert delivery failed (reports are unaffected)" >&2
     fi
     ;;
   *)
-    echo "scriptdrift: analysis failed with exit code $status; no alerts sent" >&2
+    echo "thirdsentry: analysis failed with exit code $status; no alerts sent" >&2
     ;;
 esac
 

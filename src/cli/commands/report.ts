@@ -22,7 +22,7 @@ export function registerReport(program: Command): void {
     .description('Generate JSON, SARIF and/or HTML reports from the latest (or a given) scan without scanning again')
     .option('--scan <file>', 'scan result to report on (default: the latest scan)')
     .option('-f, --format <formats>', 'comma separated: json, sarif, html (default: reporting.formats)')
-    .option('-o, --output <dir>', 'directory to write reports to (default: .scriptdrift/reports)')
+    .option('-o, --output <dir>', 'directory to write reports to (default: .thirdsentry/reports)')
     .option('--fail-on <severity>', 'exit with code 1 if a finding is at least this severe')
     .action(async (opts: ReportOptions, command: Command) => {
       const g = globalOptions(command);

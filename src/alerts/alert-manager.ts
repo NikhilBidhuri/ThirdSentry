@@ -2,7 +2,7 @@ import type { ResolvedConfig } from '../config/loader.js';
 import type { AlertsConfig, Severity } from '../config/schema.js';
 import { loadFindingState, recordAlerted, saveFindingState } from '../monitoring/dedup-state.js';
 import type { AnalysisReport } from '../types/report.js';
-import { ScriptDriftError } from '../utils/errors.js';
+import { ThirdSentryError } from '../utils/errors.js';
 import { getLogger } from '../utils/logger.js';
 import { buildAlertPayload, filterPayload, selectFindingsForAlert, type AlertPayload } from './alert-payload.js';
 import { sendEmail } from './email.js';
@@ -179,7 +179,7 @@ export async function sendAlerts(resolved: ResolvedConfig, report: AnalysisRepor
       results.push({ channel, ok: true, delivered: deliveredHere.length, attempts, ...(detail ? { detail } : {}) });
       log.info({ channel, findings: deliveredHere.length }, 'alert delivered');
     } catch (error) {
-      const raw = error instanceof ScriptDriftError || error instanceof Error ? error.message : String(error);
+      const raw = error instanceof ThirdSentryError || error instanceof Error ? error.message : String(error);
       const message = redactSecrets(raw, secrets);
       const attempts = (error as { attempts?: number }).attempts ?? 1;
       results.push({ channel, ok: false, delivered: 0, attempts, error: message });

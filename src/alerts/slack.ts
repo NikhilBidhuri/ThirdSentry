@@ -16,7 +16,7 @@ function clip(value: string, max: number): string {
 
 export function slackMessage(payload: AlertPayload): Record<string, unknown> {
   const blocks: Array<Record<string, unknown>> = [
-    { type: 'header', text: { type: 'plain_text', text: clip(`ScriptDrift: ${payload.findings.length + payload.omitted} finding(s) on ${payload.sites.join(', ')}`, 150) } },
+    { type: 'header', text: { type: 'plain_text', text: clip(`ThirdSentry: ${payload.findings.length + payload.omitted} finding(s) on ${payload.sites.join(', ')}`, 150) } },
     { type: 'section', text: { type: 'mrkdwn', text: clip(esc(payload.headline), 2900) } },
   ];
   for (const f of payload.findings.slice(0, 40)) {
@@ -33,7 +33,7 @@ export function slackMessage(payload: AlertPayload): Record<string, unknown> {
   const footer = [`Scan \`${payload.scanId}\` (${payload.scanStatus})`, `Report: ${esc(payload.reportLocation)}`];
   if (payload.omitted > 0) footer.push(`${payload.omitted} more finding(s) in the report`);
   blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: clip(footer.join(' · '), 2900) }] });
-  return { text: clip(`ScriptDrift: ${payload.headline}`, 3000), blocks };
+  return { text: clip(`ThirdSentry: ${payload.headline}`, 3000), blocks };
 }
 
 export async function sendSlack(payload: AlertPayload, webhookUrl: string, options: { timeoutMs: number; fetchImpl?: FetchLike }): Promise<void> {

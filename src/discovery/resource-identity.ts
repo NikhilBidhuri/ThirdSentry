@@ -4,7 +4,7 @@
  * A resource is matched across scans by its *identity*, which is separate
  * from both the original URL (kept verbatim for evidence) and the content
  * hash. A URL alone does not identify content: the same URL can serve
- * different bytes over time (that is precisely what ScriptDrift detects),
+ * different bytes over time (that is precisely what ThirdSentry detects),
  * and different URLs can serve identical bytes.
  *
  * External resources: identity is derived from the URL the page requested

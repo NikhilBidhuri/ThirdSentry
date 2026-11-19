@@ -5,7 +5,7 @@ import { getLogger } from '../utils/logger.js';
 import type { DestinationDecision, NetworkPolicy } from './network-policy.js';
 
 /**
- * A minimal HTTP/HTTPS forward proxy that enforces the ScriptDrift network
+ * A minimal HTTP/HTTPS forward proxy that enforces the ThirdSentry network
  * policy for *every* connection the browser makes.
  *
  * Why a proxy rather than request interception?
@@ -157,7 +157,7 @@ export class EgressProxy {
     const decision = await this.options.policy.resolveDestination(target.host, target.port);
     this.recordDecision('CONNECT', decision);
     if (!decision.allowed) {
-      client.end(`HTTP/1.1 403 Forbidden\r\nX-ScriptDrift-Blocked: ${sanitizeHeader(decision.code)}\r\nConnection: close\r\n\r\n`);
+      client.end(`HTTP/1.1 403 Forbidden\r\nX-ThirdSentry-Blocked: ${sanitizeHeader(decision.code)}\r\nConnection: close\r\n\r\n`);
       return;
     }
     const upstream = net.connect({ host: decision.address, port: decision.port, family: decision.family });
@@ -219,7 +219,7 @@ export class EgressProxy {
     const decision = await this.options.policy.resolveDestination(url.hostname, port);
     this.recordDecision(req.method ?? 'GET', decision);
     if (!decision.allowed) {
-      res.writeHead(403, { 'x-scriptdrift-blocked': sanitizeHeader(decision.code), connection: 'close' }).end();
+      res.writeHead(403, { 'x-thirdsentry-blocked': sanitizeHeader(decision.code), connection: 'close' }).end();
       return;
     }
     const headers: http.OutgoingHttpHeaders = {};

@@ -15,7 +15,7 @@ describe('configuration', () => {
   it('applies defaults', () => {
     const cfg = parseConfigText(minimal, 'test.yml');
     expect(cfg.version).toBe(1);
-    expect(cfg.storageDir).toBe('.scriptdrift');
+    expect(cfg.storageDir).toBe('.thirdsentry');
     expect(cfg.defaults.browser.profile).toBe('desktop-chromium');
     expect(cfg.defaults.scan.waitUntil).toBe('networkidle');
     expect(cfg.limits.maxResourceBytes).toBe(5 * 1024 * 1024);

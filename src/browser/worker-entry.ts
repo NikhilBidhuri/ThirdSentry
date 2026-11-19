@@ -16,7 +16,7 @@ async function main(): Promise<void> {
     process.stderr.write('usage: worker-entry <request.json> <evidence.json>\n');
     process.exit(2);
   }
-  configureLogger({ level: process.env.SCRIPTDRIFT_LOG_LEVEL ?? 'info' });
+  configureLogger({ level: process.env.THIRDSENTRY_LOG_LEVEL ?? 'info' });
   const request = JSON.parse(await readFile(requestPath, 'utf8')) as CollectRequest;
   const evidence = await collectEvidence(request);
   await writeFile(outputPath, JSON.stringify(evidence));

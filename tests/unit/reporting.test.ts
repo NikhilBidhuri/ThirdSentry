@@ -22,11 +22,11 @@ function sampleReport(extra: Partial<Finding> = {}): { report: AnalysisReport; f
   const findings = buildFindings(compareSite(current, base).changes, { site: current }).map((f, i) => (i === 0 ? { ...f, ...extra } : f));
   const report: AnalysisReport = {
     schemaVersion: 1,
-    kind: 'scriptdrift-report',
+    kind: 'thirdsentry-report',
     generatedAt: '2026-01-01T00:00:00.000Z',
     toolVersion: '0.1.0',
     scanId: 'scan-1',
-    scanPath: '.scriptdrift/reports/scans/scan-1.json',
+    scanPath: '.thirdsentry/reports/scans/scan-1.json',
     scanStatus: 'partial',
     scanStartedAt: '2026-01-01T00:00:00.000Z',
     scanFinishedAt: '2026-01-01T00:01:00.000Z',
@@ -46,7 +46,7 @@ describe('JSON report', () => {
   it('is stable, versioned JSON', () => {
     const { report } = sampleReport();
     const text = renderJsonReport(report);
-    expect(JSON.parse(text)).toMatchObject({ kind: 'scriptdrift-report', schemaVersion: 1 });
+    expect(JSON.parse(text)).toMatchObject({ kind: 'thirdsentry-report', schemaVersion: 1 });
     expect(renderJsonReport(report)).toBe(text);
   });
 });
@@ -54,7 +54,7 @@ describe('JSON report', () => {
 describe('SARIF report', () => {
   it('produces valid SARIF 2.1.0 anchored to the site entry in the config', async () => {
     const dir = await tempDir('sarif-');
-    const configPath = join(dir, 'scriptdrift.yml');
+    const configPath = join(dir, 'thirdsentry.yml');
     await writeFile(configPath, 'version: 1\nsites:\n  - name: other\n    url: https://o.example\n  - name: shop\n    url: https://shop.example\n');
     const { report, findings } = sampleReport({ suppressed: { reason: 'accepted' } });
     const sarif = (await buildSarif(report, { configPath, baseDir: dir })) as {
@@ -63,14 +63,14 @@ describe('SARIF report', () => {
     };
     expect(sarif.version).toBe('2.1.0');
     const run = sarif.runs[0];
-    expect(run?.tool.driver.name).toBe('ScriptDrift');
+    expect(run?.tool.driver.name).toBe('ThirdSentry');
     expect(run?.results).toHaveLength(findings.length);
     expect(run?.invocations[0]?.executionSuccessful).toBe(false);
     const first = run?.results[0] as { ruleId: string; ruleIndex: number; level: string; locations: Array<{ physicalLocation: { artifactLocation: { uri: string }; region: { startLine: number } } }>; partialFingerprints: Record<string, string>; suppressions?: unknown[] };
     expect(run?.tool.driver.rules[first.ruleIndex]?.id).toBe(first.ruleId);
-    expect(first.locations[0]?.physicalLocation.artifactLocation.uri).toBe('scriptdrift.yml');
+    expect(first.locations[0]?.physicalLocation.artifactLocation.uri).toBe('thirdsentry.yml');
     expect(first.locations[0]?.physicalLocation.region.startLine).toBe(5);
-    expect(first.partialFingerprints['scriptdriftFindingId/v1']).toBe(findings[0]?.id);
+    expect(first.partialFingerprints['thirdsentryFindingId/v1']).toBe(findings[0]?.id);
     expect(first.suppressions).toEqual([{ kind: 'external', justification: 'accepted' }]);
     expect(['error', 'warning', 'note']).toContain(first.level);
     expect(run?.tool.driver.rules[0]?.properties['security-severity']).toMatch(/^\d+\.\d$/);

@@ -2,14 +2,14 @@ import { readFile, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { parse as parseYaml, YAMLParseError } from 'yaml';
 import type { z } from 'zod';
-import { ConfigError, ScriptDriftError } from '../utils/errors.js';
+import { ConfigError, ThirdSentryError } from '../utils/errors.js';
 import { pathExists } from '../utils/fs.js';
-import { ConfigSchema, ScanOptionsSchema, type BrowserProfileName, type ScanOptions, type ScriptDriftConfig } from './schema.js';
+import { ConfigSchema, ScanOptionsSchema, type BrowserProfileName, type ScanOptions, type ThirdSentryConfig } from './schema.js';
 import { NetworkPolicy } from '../security/network-policy.js';
 import { resolvePageUrl, validateTargetUrl } from '../security/url-validator.js';
 import { storagePaths, type StoragePaths } from '../storage/paths.js';
 
-export const CONFIG_FILE_CANDIDATES = ['scriptdrift.yml', 'scriptdrift.yaml', '.scriptdrift/config.yml', '.scriptdrift/config.yaml'];
+export const CONFIG_FILE_CANDIDATES = ['thirdsentry.yml', 'thirdsentry.yaml', '.thirdsentry/config.yml', '.thirdsentry/config.yaml'];
 
 const MAX_CONFIG_BYTES = 1024 * 1024;
 
@@ -34,7 +34,7 @@ export interface ResolvedSite {
 }
 
 export interface ResolvedConfig {
-  readonly config: ScriptDriftConfig;
+  readonly config: ThirdSentryConfig;
   readonly configPath: string;
   readonly baseDir: string;
   readonly paths: StoragePaths;
@@ -44,7 +44,7 @@ export interface ResolvedConfig {
 export async function findConfigFile(cwd: string, explicit?: string): Promise<string> {
   if (explicit) {
     const p = isAbsolute(explicit) ? explicit : resolve(cwd, explicit);
-    if (!(await pathExists(p))) throw new ConfigError(`Config file not found: ${p}`, 'Run "scriptdrift init" to create one');
+    if (!(await pathExists(p))) throw new ConfigError(`Config file not found: ${p}`, 'Run "thirdsentry init" to create one');
     return p;
   }
   for (const candidate of CONFIG_FILE_CANDIDATES) {
@@ -52,8 +52,8 @@ export async function findConfigFile(cwd: string, explicit?: string): Promise<st
     if (await pathExists(p)) return p;
   }
   throw new ConfigError(
-    `No ScriptDrift configuration found in ${cwd}`,
-    `Run "scriptdrift init" or pass --config. Looked for: ${CONFIG_FILE_CANDIDATES.join(', ')}`,
+    `No ThirdSentry configuration found in ${cwd}`,
+    `Run "thirdsentry init" or pass --config. Looked for: ${CONFIG_FILE_CANDIDATES.join(', ')}`,
   );
 }
 
@@ -68,7 +68,7 @@ export function formatZodIssues(error: z.ZodError): string {
     .join('\n');
 }
 
-export function parseConfigText(text: string, source: string): ScriptDriftConfig {
+export function parseConfigText(text: string, source: string): ThirdSentryConfig {
   let data: unknown;
   try {
     data = parseYaml(text, { maxAliasCount: 50, prettyErrors: true });
@@ -85,7 +85,7 @@ export function parseConfigText(text: string, source: string): ScriptDriftConfig
   return result.data;
 }
 
-export function createNetworkPolicy(config: ScriptDriftConfig): NetworkPolicy {
+export function createNetworkPolicy(config: ThirdSentryConfig): NetworkPolicy {
   const net = config.security.network;
   return new NetworkPolicy({
     allowedPorts: net.allowedPorts,
@@ -103,14 +103,14 @@ function matchesSensitive(page: ResolvedPage | { key: string; configured: string
   return sensitive.some((s) => s === page.configured || s === page.key || (s.endsWith('*') && page.key.startsWith(s.slice(0, -1))));
 }
 
-export function resolveSites(config: ScriptDriftConfig, policy: NetworkPolicy): ResolvedSite[] {
+export function resolveSites(config: ThirdSentryConfig, policy: NetworkPolicy): ResolvedSite[] {
   return config.sites.map((site, index) => {
     const where = `sites[${index}] (${site.name})`;
     let siteUrl: URL;
     try {
       siteUrl = validateTargetUrl(site.url, policy);
     } catch (error) {
-      if (error instanceof ScriptDriftError) throw new ConfigError(`${where}.url: ${error.message}`, error.hint);
+      if (error instanceof ThirdSentryError) throw new ConfigError(`${where}.url: ${error.message}`, error.hint);
       throw error;
     }
     const scan = ScanOptionsSchema.parse({ ...config.defaults.scan, ...site.scan });
@@ -121,7 +121,7 @@ export function resolveSites(config: ScriptDriftConfig, policy: NetworkPolicy): 
       try {
         pageUrl = resolvePageUrl(siteUrl, configured, policy);
       } catch (error) {
-        if (error instanceof ScriptDriftError) throw new ConfigError(`${where}.pages: ${error.message}`, error.hint);
+        if (error instanceof ThirdSentryError) throw new ConfigError(`${where}.pages: ${error.message}`, error.hint);
         throw error;
       }
       pageUrl.hash = '';
@@ -151,9 +151,9 @@ export async function loadConfig(options: { cwd?: string; configPath?: string } 
   if (info.size > MAX_CONFIG_BYTES) throw new ConfigError(`Config file ${configPath} is larger than 1 MiB`);
   const text = await readFile(configPath, 'utf8');
   const config = parseConfigText(text, configPath);
-  // Config may live in .scriptdrift/config.yml; the project root is then its parent.
+  // Config may live in .thirdsentry/config.yml; the project root is then its parent.
   let baseDir = dirname(configPath);
-  if (baseDir.endsWith('.scriptdrift')) baseDir = dirname(baseDir);
+  if (baseDir.endsWith('.thirdsentry')) baseDir = dirname(baseDir);
   const policy = createNetworkPolicy(config);
   const sites = resolveSites(config, policy);
   return { config, configPath, baseDir, paths: storagePaths(resolve(baseDir, config.storageDir)), sites };

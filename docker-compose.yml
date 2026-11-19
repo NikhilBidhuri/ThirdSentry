@@ -1,4 +1,4 @@
-# ScriptDrift container deployment.
+# ThirdSentry container deployment.
 #
 # Every trust boundary runs in its own container:
 #
@@ -11,11 +11,11 @@
 #   alerter       only container that receives alert credentials (.env); reads reports
 #
 # Run a scan:     ./scripts/run-scan.sh        (see docs/docker.md)
-# Project files:  SCRIPTDRIFT_PROJECT_DIR (default ./examples/project) must contain
-#                 scriptdrift.yml and .scriptdrift/baselines/
+# Project files:  THIRDSENTRY_PROJECT_DIR (default ./examples/project) must contain
+#                 thirdsentry.yml and .thirdsentry/baselines/
 
 x-hardening: &hardening
-  image: scriptdrift:local
+  image: thirdsentry:local
   read_only: true
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
@@ -23,13 +23,13 @@ x-hardening: &hardening
   tmpfs:
     - /tmp:size=256m,mode=1777
 
-x-config: &config-volume ${SCRIPTDRIFT_PROJECT_DIR:-./examples/project}/scriptdrift.yml:/work/scriptdrift.yml:ro
+x-config: &config-volume ${THIRDSENTRY_PROJECT_DIR:-./examples/project}/thirdsentry.yml:/work/thirdsentry.yml:ro
 
 services:
   egress-proxy:
     <<: *hardening
     build: .
-    command: ["--config", "/work/scriptdrift.yml", "egress-proxy", "--listen", "0.0.0.0:3128"]
+    command: ["--config", "/work/thirdsentry.yml", "egress-proxy", "--listen", "0.0.0.0:3128"]
     volumes: [*config-volume]
     networks: [scan-internal, egress]
     mem_limit: 256m
@@ -42,7 +42,7 @@ services:
     # Chromium's own sandbox needs privileges this hardened container does not
     # have; the container (no capabilities, read-only rootfs, no route to the
     # internet or your network, no secrets) is the isolation boundary instead.
-    command: ["--config", "/work/scriptdrift.yml", "collect", "--out", "/evidence/evidence.json", "--proxy", "http://egress-proxy:3128", "--no-chromium-sandbox"]
+    command: ["--config", "/work/thirdsentry.yml", "collect", "--out", "/evidence/evidence.json", "--proxy", "http://egress-proxy:3128", "--no-chromium-sandbox"]
     volumes:
       - *config-volume
       - evidence:/evidence
@@ -59,29 +59,29 @@ services:
   analyzer:
     <<: *hardening
     profiles: [pipeline]
-    command: ["--config", "/work/scriptdrift.yml", "analyze", "--evidence", "/evidence/evidence.json"]
+    command: ["--config", "/work/thirdsentry.yml", "analyze", "--evidence", "/evidence/evidence.json"]
     network_mode: none
     volumes:
       - *config-volume
-      - ${SCRIPTDRIFT_PROJECT_DIR:-./examples/project}/.scriptdrift/baselines:/work/.scriptdrift/baselines:ro
+      - ${THIRDSENTRY_PROJECT_DIR:-./examples/project}/.thirdsentry/baselines:/work/.thirdsentry/baselines:ro
       - evidence:/evidence:ro
-      - reports:/work/.scriptdrift/reports
-      - state:/work/.scriptdrift/state
-      - cache:/work/.scriptdrift/cache
+      - reports:/work/.thirdsentry/reports
+      - state:/work/.thirdsentry/state
+      - cache:/work/.thirdsentry/cache
     mem_limit: 1g
     pids_limit: 128
 
   alerter:
     <<: *hardening
     profiles: [pipeline]
-    command: ["--config", "/work/scriptdrift.yml", "alert"]
+    command: ["--config", "/work/thirdsentry.yml", "alert"]
     env_file:
       - path: .env
         required: false
     volumes:
       - *config-volume
-      - reports:/work/.scriptdrift/reports:ro
-      - state:/work/.scriptdrift/state
+      - reports:/work/.thirdsentry/reports:ro
+      - state:/work/.thirdsentry/state
     networks: [egress]
     mem_limit: 256m
     pids_limit: 64
@@ -94,11 +94,11 @@ services:
     network_mode: none
     volumes:
       - *config-volume
-      - ${SCRIPTDRIFT_PROJECT_DIR:-./examples/project}/.scriptdrift/baselines:/work/.scriptdrift/baselines
-      - reports:/work/.scriptdrift/reports
-      - state:/work/.scriptdrift/state
-      - cache:/work/.scriptdrift/cache
-    entrypoint: ["node", "/opt/scriptdrift/dist/cli/bin.js", "--config", "/work/scriptdrift.yml"]
+      - ${THIRDSENTRY_PROJECT_DIR:-./examples/project}/.thirdsentry/baselines:/work/.thirdsentry/baselines
+      - reports:/work/.thirdsentry/reports
+      - state:/work/.thirdsentry/state
+      - cache:/work/.thirdsentry/cache
+    entrypoint: ["node", "/opt/thirdsentry/dist/cli/bin.js", "--config", "/work/thirdsentry.yml"]
 
 volumes:
   evidence:

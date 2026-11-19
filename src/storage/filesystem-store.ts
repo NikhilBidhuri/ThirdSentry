@@ -1,6 +1,6 @@
 import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
-import { ScriptDriftError } from '../utils/errors.js';
+import { ThirdSentryError } from '../utils/errors.js';
 import { pathExists, readJsonFile, writeFileAtomic, writeJsonAtomic } from '../utils/fs.js';
 import type { ScanResult } from '../types/index.js';
 import type { StoragePaths } from './paths.js';
@@ -15,7 +15,7 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 function assertInside(root: string, target: string): string {
   const r = resolve(root);
   const t = resolve(target);
-  if (t !== r && !t.startsWith(r + sep)) throw new ScriptDriftError(`Refusing to write outside storage directory: ${t}`);
+  if (t !== r && !t.startsWith(r + sep)) throw new ThirdSentryError(`Refusing to write outside storage directory: ${t}`);
   return t;
 }
 
@@ -26,7 +26,7 @@ export async function ensureStorage(paths: StoragePaths): Promise<void> {
 }
 
 export function scanResultPath(paths: StoragePaths, scanId: string): string {
-  if (!/^[A-Za-z0-9._-]+$/.test(scanId)) throw new ScriptDriftError(`Invalid scan id: ${scanId}`);
+  if (!/^[A-Za-z0-9._-]+$/.test(scanId)) throw new ThirdSentryError(`Invalid scan id: ${scanId}`);
   return join(paths.scans, `${scanId}.json`);
 }
 
@@ -48,15 +48,15 @@ export async function saveScreenshots(paths: StoragePaths, screenshots: Readonly
 
 export async function loadScanResult(path: string): Promise<ScanResult> {
   const data = (await readJsonFile(path)) as Partial<ScanResult>;
-  if (data.kind !== 'scriptdrift-scan' || data.schemaVersion !== 1 || !Array.isArray(data.sites)) {
-    throw new ScriptDriftError(`${path} is not a ScriptDrift scan result`, { exitCode: 2 });
+  if (data.kind !== 'thirdsentry-scan' || data.schemaVersion !== 1 || !Array.isArray(data.sites)) {
+    throw new ThirdSentryError(`${path} is not a ThirdSentry scan result`, { exitCode: 2 });
   }
   return data as ScanResult;
 }
 
 export async function loadLatestScan(paths: StoragePaths): Promise<ScanResult> {
   if (!(await pathExists(paths.latestScan))) {
-    throw new ScriptDriftError('No scan results found', { exitCode: 2, hint: 'Run "scriptdrift scan" first.' });
+    throw new ThirdSentryError('No scan results found', { exitCode: 2, hint: 'Run "thirdsentry scan" first.' });
   }
   return loadScanResult(paths.latestScan);
 }
@@ -66,7 +66,7 @@ export class ContentStore {
   constructor(private readonly dir: string) {}
 
   private pathFor(sha256: string): string {
-    if (!SHA256_HEX.test(sha256)) throw new ScriptDriftError(`Invalid content hash: ${sha256}`);
+    if (!SHA256_HEX.test(sha256)) throw new ThirdSentryError(`Invalid content hash: ${sha256}`);
     return join(this.dir, sha256.slice(0, 2), sha256);
   }
 

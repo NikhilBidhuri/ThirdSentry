@@ -10,7 +10,7 @@ import { BaselineSchema, type Baseline } from './baseline-schema.js';
 export function validateBaseline(data: unknown, expectedSite: string, source: string): Baseline {
   const parsed = BaselineSchema.safeParse(data);
   if (!parsed.success) {
-    throw new BaselineError(`Invalid baseline ${source}:\n${formatZodIssues(parsed.error)}`, 'Fix the file or regenerate it with "scriptdrift baseline".');
+    throw new BaselineError(`Invalid baseline ${source}:\n${formatZodIssues(parsed.error)}`, 'Fix the file or regenerate it with "thirdsentry baseline".');
   }
   const baseline = parsed.data;
   if (baseline.site !== expectedSite) {

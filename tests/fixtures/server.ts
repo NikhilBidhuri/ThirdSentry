@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
  *
  * One HTTP server answers for several fake hostnames (shop.test,
  * cdn.vendor-a.test, ...); requests are dispatched on the Host header. The
- * browser reaches these hosts through the ScriptDrift egress proxy using
+ * browser reaches these hosts through the ThirdSentry egress proxy using
  * `security.network.resolverOverrides`, so no real DNS or internet access is
  * needed and no production website is ever contacted.
  *
