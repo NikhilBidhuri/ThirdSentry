@@ -118,7 +118,11 @@ export async function collectEvidence(request: CollectRequest): Promise<ScanEvid
       try {
         launched = await launchBrowser({ profile, proxyUrl, chromiumSandbox: request.chromiumSandbox });
       } catch (error) {
-        const message = error instanceof Error ? error.message.split('\n')[0] ?? error.message : String(error);
+        let message = error instanceof Error ? error.message.split('\n')[0] ?? error.message : String(error);
+        if (profile.engine === 'chromium' && request.chromiumSandbox && process.platform === 'linux') {
+          message +=
+            " (Chromium's sandbox is enabled; hosts that restrict unprivileged user namespaces, such as Ubuntu 23.10+, block it — see docs/troubleshooting.md)";
+        }
         siteIssues.push({
           level: 'error',
           code: 'browser-launch-failed',
