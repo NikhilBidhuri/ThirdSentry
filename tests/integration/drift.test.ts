@@ -166,4 +166,17 @@ describe('drift detection end to end', () => {
     const r = await cli('baseline', '--approve', 'TS-doesnotexist', '--yes');
     expect(r.code).toBe(2);
   });
+
+  it('reports a failed sensitive page and refuses to "approve" it into the baseline', async () => {
+    server.html('shop.test', '/checkout', 'Internal error');
+    server.set('shop.test', '/checkout', { ...server.routes.get('shop.test/checkout')!, status: 500 });
+    await cli('scan', '--no-alerts');
+    const failed = (await report()).findings.find((f) => f.kind === 'page-failed');
+    expect(failed).toBeDefined();
+    const baselineFile = join(dir, '.thirdsentry', 'baselines', 'shop', 'baseline.json');
+    const before = await readFile(baselineFile, 'utf8');
+    const r = await cli('baseline', '--approve', failed!.id, '--yes');
+    expect(r.code).toBe(2);
+    expect(await readFile(baselineFile, 'utf8')).toBe(before);
+  }, 120_000);
 });

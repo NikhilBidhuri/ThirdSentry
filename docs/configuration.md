@@ -74,7 +74,7 @@ serviceWorkers:
   probeBlockedRegistrations: true
 
 retention:
-  storeScriptContent: false
+  scriptContent: findings
   maxScanReports: 50
   maxAgeDays: 90
 ```
@@ -158,8 +158,8 @@ See [privacy.md](privacy.md).
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `storeScriptContent` | `false` | Keep script bodies in `.thirdsentry/cache/content/` (content-addressed). Needed to show code diffs between versions. |
-| `maxScanReports` | `50` | Scan result files to keep. |
+| `scriptContent` | `findings` | Which script bodies to keep in `.thirdsentry/cache/content/` (content-addressed): `none`, `findings` (approved versions and versions involved in findings, so `diff` can show code changes) or `all`. The deprecated `storeScriptContent: true/false` means `all`/`none`. See [privacy.md](privacy.md). |
+| `maxScanReports` | `50` | Scan result files to keep per site. |
 | `maxAgeDays` | `90` | Delete scan results, screenshots and cached content older than this. |
 
 ## `risk`

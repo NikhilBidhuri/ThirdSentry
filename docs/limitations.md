@@ -45,7 +45,7 @@ With `strategy: allow`, service workers run normally. Their script and traffic a
 
 - Bodies larger than `limits.maxResourceBytes` are tracked by identity only (`too-large`).
 - Some responses do not expose a body to Playwright (for example certain cached or aborted responses). These are tracked with content status `unavailable`.
-- Captured content is used for hashing and analysis and is discarded afterwards unless `retention.storeScriptContent` is enabled.
+- Captured content is used for hashing and analysis and is discarded afterwards except as `retention.scriptContent` allows (by default only approved versions and versions involved in findings are kept; see [privacy.md](privacy.md)).
 
 ## In-page instrumentation and evidence limits
 

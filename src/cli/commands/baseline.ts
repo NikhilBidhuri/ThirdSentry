@@ -159,6 +159,7 @@ export function registerBaseline(program: Command): void {
 
       const plans: PlannedUpdate[] = [];
       const matchedIds = new Set<string>();
+      const notApprovable: Finding[] = [];
       for (const site of sites) {
         const previous = await loadBaseline(resolved.paths, site.name);
         const common = {
@@ -180,8 +181,13 @@ export function registerBaseline(program: Command): void {
           findings.forEach((f, i) => {
             if (!requested.has(f.id)) return;
             matchedIds.add(f.id);
+            const forFinding = approvalItemsFor(changes[i] as Change);
+            if (forFinding.length === 0) {
+              notApprovable.push(f);
+              return;
+            }
             approved.push(f);
-            items.push(...approvalItemsFor(changes[i] as Change));
+            items.push(...forFinding);
           });
           if (items.length === 0) continue;
           const next = approveSelected(previous, site, items, common);
@@ -207,6 +213,15 @@ export function registerBaseline(program: Command): void {
       const unmatched = [...requested].filter((id) => !matchedIds.has(id));
       if (unmatched.length > 0) {
         throw new BaselineError(`No current finding matches: ${unmatched.join(', ')}`, 'Run "thirdsentry diff" to list current finding IDs.');
+      }
+      if (notApprovable.length > 0) {
+        // Coverage findings (page failed, coverage degraded) describe the scan, not the
+        // site's code: there is nothing to add to a baseline, and silently doing nothing
+        // would look like an approval.
+        throw new BaselineError(
+          `These findings cannot be approved into a baseline: ${notApprovable.map((f) => `${f.id} (${f.kind})`).join(', ')}`,
+          'They clear when the page is scanned completely again. To silence a known outage, add a time-limited suppression in thirdsentry.yml.',
+        );
       }
       if (plans.length === 0) {
         if (g.json) printJson({ updated: [], scanId: scan.scanId });
