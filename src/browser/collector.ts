@@ -3,11 +3,13 @@ import type { Limits, NetworkSecurityConfig } from '../config/schema.js';
 import type { ResolvedSite } from '../config/loader.js';
 import { EgressProxy, type ProxyConnectionEvent } from '../security/egress-proxy.js';
 import { NetworkPolicy } from '../security/network-policy.js';
-import { EVIDENCE_SCHEMA_VERSION, type Issue, type PageEvidence, type PageStatus, type ScanEvidence, type SiteEvidence } from '../types/evidence.js';
+import { EVIDENCE_SCHEMA_VERSION, type Issue, type PageEvidence, type PageStatus, type ScanEvidence } from '../types/evidence.js';
 import { getLogger } from '../utils/logger.js';
 import { toolVersion } from '../utils/version.js';
 import { launchBrowser, type LaunchedBrowser } from './browser-manager.js';
 import { getBrowserProfile } from './browser-profiles.js';
+import { effectiveScanBudget, ScanEvidenceBudget } from './evidence-budget.js';
+import { MemorySink, type EvidenceSink } from './evidence-sink.js';
 import { scanPage } from './page-scanner.js';
 
 /**
@@ -35,13 +37,13 @@ function worst(a: PageStatus, b: PageStatus): PageStatus {
   return 'complete';
 }
 
-function siteStatus(pages: readonly PageEvidence[]): PageStatus {
+export function siteStatus(pages: ReadonlyArray<{ readonly status: PageStatus }>): PageStatus {
   if (pages.length === 0) return 'failed';
   if (pages.every((p) => p.status === 'failed')) return 'failed';
   return pages.reduce<PageStatus>((acc, p) => (p.status === 'complete' ? acc : worst(acc, 'partial')), 'complete');
 }
 
-function skippedPage(page: ResolvedSite['pages'][number], code: string, message: string): PageEvidence {
+export function skippedPage(page: ResolvedSite['pages'][number], code: string, message: string): PageEvidence {
   const now = new Date().toISOString();
   return {
     pageKey: page.key,
@@ -67,8 +69,19 @@ function skippedPage(page: ResolvedSite['pages'][number], code: string, message:
   };
 }
 
-/** Run the browser collection for all requested sites. */
+/** Run the browser collection for all requested sites and return the evidence in memory. */
 export async function collectEvidence(request: CollectRequest): Promise<ScanEvidence> {
+  const sink = new MemorySink();
+  await runCollection(request, sink);
+  return sink.result();
+}
+
+/**
+ * Run the browser collection, emitting evidence to `sink` as each page and
+ * site completes, so a later crash or timeout cannot lose finished work and
+ * no single in-memory structure has to hold the evidence of the whole scan.
+ */
+export async function runCollection(request: CollectRequest, sink: EvidenceSink): Promise<void> {
   const log = getLogger('collector');
   const startedAt = new Date();
   const deadline = startedAt.getTime() + request.limits.maxScanDurationMs;
@@ -105,14 +118,35 @@ export async function collectEvidence(request: CollectRequest): Promise<ScanEvid
     });
   }
 
-  const sites: SiteEvidence[] = [];
+  await sink.begin({
+    schemaVersion: EVIDENCE_SCHEMA_VERSION,
+    scanId: request.scanId,
+    toolVersion: toolVersion(),
+    startedAt: startedAt.toISOString(),
+    isolation: request.isolation,
+    serviceWorkerStrategy: request.serviceWorkers.strategy,
+    issues,
+  });
+  const evidenceBudget = new ScanEvidenceBudget(effectiveScanBudget(request.limits));
   let pagesBudget = request.limits.maxPagesPerScan;
   try {
-    for (const site of request.sites) {
+    for (const [siteIndex, site] of request.sites.entries()) {
       const siteStarted = new Date().toISOString();
       const profile = getBrowserProfile(site.profile);
       const siteIssues: Issue[] = [];
-      const pages: PageEvidence[] = [];
+      const pages: Array<{ status: PageStatus }> = [];
+      const emit = async (page: PageEvidence): Promise<void> => {
+        await sink.page(siteIndex, pages.length, page);
+        pages.push({ status: page.status });
+      };
+      await sink.siteStarted(siteIndex, {
+        name: site.name,
+        url: site.url,
+        profile: site.profile,
+        browserName: profile.engine,
+        emulation: profile.emulation,
+        startedAt: siteStarted,
+      });
       const eventStart = proxy?.getEvents().events.length ?? 0;
       let launched: LaunchedBrowser | undefined;
       try {
@@ -133,20 +167,20 @@ export async function collectEvidence(request: CollectRequest): Promise<ScanEvid
       try {
         for (const page of site.pages) {
           if (!launched) {
-            pages.push(skippedPage(page, 'browser-launch-failed', 'Browser could not be launched'));
+            await emit(skippedPage(page, 'browser-launch-failed', 'Browser could not be launched'));
             continue;
           }
           if (pagesBudget <= 0) {
-            pages.push(skippedPage(page, 'page-limit', 'limits.maxPagesPerScan reached; page not scanned'));
+            await emit(skippedPage(page, 'page-limit', 'limits.maxPagesPerScan reached; page not scanned'));
             continue;
           }
           if (Date.now() > deadline - 5_000) {
-            pages.push(skippedPage(page, 'scan-time-limit', 'limits.maxScanDurationMs reached; page not scanned'));
+            await emit(skippedPage(page, 'scan-time-limit', 'limits.maxScanDurationMs reached; page not scanned'));
             continue;
           }
           pagesBudget--;
           log.info({ site: site.name, page: page.key }, 'scanning page');
-          pages.push(
+          await emit(
             await scanPage({
               browser: launched.browser,
               profile,
@@ -155,6 +189,7 @@ export async function collectEvidence(request: CollectRequest): Promise<ScanEvid
               limits: request.limits,
               serviceWorkers: request.serviceWorkers,
               deadline,
+              budget: evidenceBudget,
             }),
           );
         }
@@ -162,7 +197,7 @@ export async function collectEvidence(request: CollectRequest): Promise<ScanEvid
         await launched?.close();
       }
       const events: ProxyConnectionEvent[] = proxy ? proxy.getEvents().events.slice(eventStart) : [];
-      sites.push({
+      await sink.siteFinished(siteIndex, {
         name: site.name,
         url: site.url,
         profile: site.profile,
@@ -173,7 +208,6 @@ export async function collectEvidence(request: CollectRequest): Promise<ScanEvid
         issues: siteIssues,
         startedAt: siteStarted,
         finishedAt: new Date().toISOString(),
-        pages,
         proxyEvents: events.filter((e) => !e.allowed).slice(0, 5_000).concat(events.filter((e) => e.allowed).slice(0, 5_000)),
         proxyEventsDropped: Math.max(0, events.length - 10_000),
       });
@@ -182,15 +216,5 @@ export async function collectEvidence(request: CollectRequest): Promise<ScanEvid
     await proxy?.stop();
   }
 
-  return {
-    schemaVersion: EVIDENCE_SCHEMA_VERSION,
-    scanId: request.scanId,
-    toolVersion: toolVersion(),
-    startedAt: startedAt.toISOString(),
-    finishedAt: new Date().toISOString(),
-    isolation: request.isolation,
-    serviceWorkerStrategy: request.serviceWorkers.strategy,
-    sites,
-    issues,
-  };
+  await sink.end({ finishedAt: new Date().toISOString(), issues });
 }

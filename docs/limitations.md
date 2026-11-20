@@ -47,6 +47,12 @@ With `strategy: allow`, service workers run normally. Their script and traffic a
 - Some responses do not expose a body to Playwright (for example certain cached or aborted responses). These are tracked with content status `unavailable`.
 - Captured content is used for hashing and analysis and is discarded afterwards unless `retention.storeScriptContent` is enabled.
 
+## In-page instrumentation and evidence limits
+
+- The end-of-scan DOM snapshot runs through `frame.evaluate`, which executes in the page's main JavaScript world. It is not tamper-proof: a hostile page can alter the DOM APIs it uses. Snapshot and mutation-observer data (inline script text, `integrity`, "inserted by script") is therefore treated as page-reported context. It can add signals, never remove network-derived ones: any report of runtime injection marks a script dynamic, and an `integrity` value is only used for an SRI check when the snapshot corroborates it. A CDP isolated world would be stronger but is Chromium-only and has not been implemented.
+- Evidence per page and per scan is bounded (`limits.maxEvidenceBytesPerPage`, `limits.maxEvidenceBytesPerScan`, `limits.maxReportCallsPerPage`). Once exhausted, bodies are recorded with content status `budget-exceeded` (identity and network facts are kept) and the page is marked partial with an issue. Reports beyond the per-page worker/blob entry limits, blobs the instrumentation could not capture, and frames the snapshot could not inspect before the time budget are counted and also mark the page partial.
+- Evidence is written incrementally by the browser worker (one file per page). If the worker crashes or times out, completed pages and sites are kept; the page in progress and the not-yet-scanned pages are marked failed with an issue, and the scan carries a `worker-incomplete` issue. On timeout the worker gets SIGTERM and a grace period, then the whole process tree (including browsers) is killed.
+
 ## Network monitoring
 
 The browser is observed through Playwright and through ThirdSentry's egress proxy. This does **not** capture every possible way data can leave a browser:

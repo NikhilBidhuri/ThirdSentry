@@ -81,6 +81,12 @@ export const LimitsSchema = z
     maxScanDurationMs: z.number().int().min(10_000).max(24 * 3600_000).default(30 * 60_000),
     /** Maximum size of the evidence handed from the browser worker to the analyser. */
     maxEvidenceBytes: z.number().int().min(1024 * 1024).max(4 * 1024 * 1024 * 1024).default(512 * 1024 * 1024),
+    /** Evidence budget per page (captured bodies, inline text, blobs, metadata). Excess bodies are recorded as `budget-exceeded`. */
+    maxEvidenceBytesPerPage: z.number().int().min(1024 * 1024).max(1024 * 1024 * 1024).default(64 * 1024 * 1024),
+    /** Evidence budget for the whole scan (also capped at 75% of maxEvidenceBytes). */
+    maxEvidenceBytesPerScan: z.number().int().min(1024 * 1024).max(4 * 1024 * 1024 * 1024).default(256 * 1024 * 1024),
+    /** Calls the page may make to the in-page reporting binding before further reports are ignored. */
+    maxReportCallsPerPage: z.number().int().min(100).max(1_000_000).default(5_000),
     /** Maximum bytes transferred through a single proxied connection. */
     maxBytesPerConnection: z.number().int().min(1024 * 1024).max(1024 * 1024 * 1024).default(50 * 1024 * 1024),
   })
