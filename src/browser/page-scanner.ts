@@ -1,4 +1,5 @@
-import { errors as playwrightErrors, type Browser, type BrowserContext, type Page, type Response } from 'playwright';
+import { errors as playwrightErrors, type Browser, type BrowserContext, type Locator, type Page, type Response } from 'playwright';
+import type { Logger } from 'pino';
 import type { Limits, ScanOptions } from '../config/schema.js';
 import type { ResolvedPage } from '../config/loader.js';
 import { filterResponseHeaders, redactText, redactUrl } from '../security/redaction.js';
@@ -36,6 +37,104 @@ const FRAME_SNAPSHOT_TIMEOUT_MS = 5_000;
 /** Keep the evidence below the schema's issue limit (1000). */
 const MAX_PAGE_ISSUES = 900;
 
+/** Console and page errors observed on a page (journeys swap these between captures). */
+export interface PageObservations {
+  consoleErrors: string[];
+  pageErrors: string[];
+}
+
+export function degrader(state: { status: PageStatus }): (to: PageStatus) => void {
+  return (to) => {
+    if (to === 'failed' || (to === 'partial' && state.status === 'complete')) state.status = to;
+  };
+}
+
+/**
+ * Context-level instrumentation: the in-page reporting binding and the init
+ * script. Must run before the first page of the context is created.
+ */
+export async function installInstrumentation(context: BrowserContext, resources: ResourceCollector, limits: Limits): Promise<void> {
+  await resources.install(context);
+  await context.addInitScript({
+    content: buildInitScript({
+      maxInlineChars: limits.maxInlineScriptBytes,
+      maxBlobBytes: limits.maxResourceBytes,
+      maxReports: limits.maxScriptsPerPage * 4,
+    }),
+  });
+}
+
+/** Page-level listeners: error capture, and refusing dialogs, downloads and popups. */
+export function attachPageListeners(page: Page, observations: PageObservations | (() => PageObservations)): void {
+  const current = (): PageObservations => (typeof observations === 'function' ? observations() : observations);
+  page.on('console', (msg) => {
+    const obs = current();
+    if (msg.type() === 'error' && obs.consoleErrors.length < MAX_CONSOLE_ENTRIES) obs.consoleErrors.push(redactText(msg.text(), 500));
+  });
+  page.on('pageerror', (err) => {
+    const obs = current();
+    if (obs.pageErrors.length < MAX_CONSOLE_ENTRIES) obs.pageErrors.push(redactText(err.message, 500));
+  });
+  page.on('dialog', (dialog) => {
+    void dialog.dismiss().catch(() => undefined);
+  });
+  page.on('download', (download) => {
+    void download.cancel().catch(() => undefined);
+  });
+  page.on('popup', (popup) => {
+    // Popups are not scanned; close them to bound resource usage.
+    void popup.close().catch(() => undefined);
+  });
+}
+
+/** Wait for the network to go idle (when configured) and for the settle time, bounded by the deadline. */
+export async function settlePage(page: Page, scan: ScanOptions, deadline: number, issues: Issue[], degrade: (to: PageStatus) => void): Promise<void> {
+  const remaining = (): number => Math.max(1_000, deadline - Date.now());
+  if (scan.waitUntil === 'networkidle' && scan.networkIdleTimeout > 0) {
+    try {
+      await page.waitForLoadState('networkidle', { timeout: Math.min(scan.networkIdleTimeout, remaining()) });
+    } catch {
+      issues.push({
+        level: 'warning',
+        code: 'network-not-idle',
+        message: `Network did not become idle within ${scan.networkIdleTimeout}ms; continuing with what was observed`,
+      });
+    }
+  }
+  const settle = Math.min(scan.settleMs, Math.max(0, deadline - Date.now() - 5_000));
+  if (settle > 0) await page.waitForTimeout(settle);
+  if (Date.now() > deadline) {
+    issues.push({ level: 'error', code: 'scan-time-limit', message: 'Scan time budget exhausted while observing the page' });
+    degrade('partial');
+  }
+}
+
+/** The collectors that observe a page; `makeNetwork` creates a fresh network collector (journeys: one per capture segment). */
+export function createCollectors(
+  limits: Limits,
+  budget: PageEvidenceBudget,
+): { resources: ResourceCollector; makeNetwork: (page: Page, budget?: PageEvidenceBudget) => NetworkCollector } {
+  const resources = new ResourceCollector({
+    maxScripts: limits.maxScriptsPerPage,
+    maxInlineChars: limits.maxInlineScriptBytes,
+    maxBlobBase64Chars: Math.ceil((limits.maxResourceBytes * 4) / 3) + 4,
+    maxEntries: 1000,
+    maxReportCalls: limits.maxReportCallsPerPage,
+    budget,
+  });
+  return {
+    resources,
+    makeNetwork: (page, segmentBudget) =>
+      new NetworkCollector(page, {
+        maxRequests: limits.maxRequestsPerPage,
+        maxScripts: limits.maxScriptsPerPage,
+        maxResourceBytes: limits.maxResourceBytes,
+        bodyTimeoutMs: 20_000,
+        budget: segmentBudget ?? budget,
+      }),
+  };
+}
+
 /**
  * Scan a single page in a fresh, isolated browser context and return the raw
  * evidence. Never throws for page-level problems: failures are reported via
@@ -46,13 +145,10 @@ export async function scanPage(request: PageScanRequest): Promise<PageEvidence> 
   const log = getLogger('page-scanner').child({ page: request.page.url });
   const startedAt = new Date().toISOString();
   const issues: Issue[] = [];
-  const consoleErrors: string[] = [];
-  const pageErrors: string[] = [];
+  const obs: PageObservations = { consoleErrors: [], pageErrors: [] };
   const { limits, scan } = request;
   const state: { status: PageStatus } = { status: 'complete' };
-  const degrade = (to: PageStatus): void => {
-    if (to === 'failed' || (to === 'partial' && state.status === 'complete')) state.status = to;
-  };
+  const degrade = degrader(state);
 
   let context: BrowserContext | undefined;
   try {
@@ -62,59 +158,23 @@ export async function scanPage(request: PageScanRequest): Promise<PageEvidence> 
       ...(scan.userAgent ? { userAgent: scan.userAgent } : {}),
     });
   } catch (error) {
-    return failedPage(request, startedAt, [{ level: 'error', code: 'context-failed', message: messageOf(error) }]);
+    return failedPage(request.page, startedAt, [{ level: 'error', code: 'context-failed', message: messageOf(error) }]);
   }
 
   const budget = (request.budget ?? new ScanEvidenceBudget(effectiveScanBudget(limits))).page(limits.maxEvidenceBytesPerPage);
-  const resources = new ResourceCollector({
-    maxScripts: limits.maxScriptsPerPage,
-    maxInlineChars: limits.maxInlineScriptBytes,
-    maxBlobBase64Chars: Math.ceil((limits.maxResourceBytes * 4) / 3) + 4,
-    maxEntries: 1000,
-    maxReportCalls: limits.maxReportCallsPerPage,
-    budget,
-  });
+  const { resources, makeNetwork } = createCollectors(limits, budget);
 
   try {
-    await resources.install(context);
-    await context.addInitScript({
-      content: buildInitScript({
-        maxInlineChars: limits.maxInlineScriptBytes,
-        maxBlobBytes: limits.maxResourceBytes,
-        maxReports: limits.maxScriptsPerPage * 4,
-      }),
-    });
+    await installInstrumentation(context, resources, limits);
     const page = await context.newPage();
     resources.attachPage(page);
     const remaining = (): number => Math.max(1_000, request.deadline - Date.now());
     page.setDefaultTimeout(Math.min(scan.timeout, remaining()));
     page.setDefaultNavigationTimeout(Math.min(scan.timeout, remaining()));
 
-    const network = new NetworkCollector(page, {
-      maxRequests: limits.maxRequestsPerPage,
-      maxScripts: limits.maxScriptsPerPage,
-      maxResourceBytes: limits.maxResourceBytes,
-      bodyTimeoutMs: 20_000,
-      budget,
-    });
+    const network = makeNetwork(page);
     network.attach(context);
-
-    page.on('console', (msg) => {
-      if (msg.type() === 'error' && consoleErrors.length < MAX_CONSOLE_ENTRIES) consoleErrors.push(redactText(msg.text(), 500));
-    });
-    page.on('pageerror', (err) => {
-      if (pageErrors.length < MAX_CONSOLE_ENTRIES) pageErrors.push(redactText(err.message, 500));
-    });
-    page.on('dialog', (dialog) => {
-      void dialog.dismiss().catch(() => undefined);
-    });
-    page.on('download', (download) => {
-      void download.cancel().catch(() => undefined);
-    });
-    page.on('popup', (popup) => {
-      // Popups are not scanned; close them to bound resource usage.
-      void popup.close().catch(() => undefined);
-    });
+    attachPageListeners(page, obs);
 
     // --- Navigation -------------------------------------------------------
     let docResponse: Response | null = null;
@@ -142,157 +202,198 @@ export async function scanPage(request: PageScanRequest): Promise<PageEvidence> 
       }
     }
 
-    if (state.status !== 'failed') {
-      if (scan.waitUntil === 'networkidle' && scan.networkIdleTimeout > 0) {
-        try {
-          await page.waitForLoadState('networkidle', { timeout: Math.min(scan.networkIdleTimeout, remaining()) });
-        } catch {
-          issues.push({
-            level: 'warning',
-            code: 'network-not-idle',
-            message: `Network did not become idle within ${scan.networkIdleTimeout}ms; continuing with what was observed`,
-          });
-        }
-      }
-      const settle = Math.min(scan.settleMs, Math.max(0, request.deadline - Date.now() - 5_000));
-      if (settle > 0) await page.waitForTimeout(settle);
-      if (Date.now() > request.deadline) {
-        issues.push({ level: 'error', code: 'scan-time-limit', message: 'Scan time budget exhausted while observing the page' });
-        degrade('partial');
-      }
-    }
+    if (state.status !== 'failed') await settlePage(page, scan, request.deadline, issues, degrade);
 
-    const finalUrl = page.url();
-    try {
-      if (docResponse && new URL(finalUrl).origin !== new URL(request.page.url).origin) {
-        issues.push({
-          level: 'warning',
-          code: 'cross-origin-navigation',
-          message: `Page ended on a different origin (${redactUrl(finalUrl)}); results describe that page`,
-        });
-      }
-    } catch {
-      // ignore malformed URLs
-    }
-
-    // --- DOM snapshot of every frame -------------------------------------
-    // One wall-clock budget for all frames, never past the scan deadline: a
-    // page with many hung frames must not push the worker past the time at
-    // which the coordinator kills it (which would lose every site's evidence).
-    let frames: FrameEvidence[] = [];
-    let snapshotScripts: DomScriptEvidence[] = [];
-    let framesNotInspected = 0;
-    if (state.status !== 'failed') {
-      const snap = await snapshotFrames(page, Math.min(request.deadline, Date.now() + SNAPSHOT_BUDGET_MS), limits, budget);
-      frames = snap.frames;
-      snapshotScripts = snap.scripts;
-      framesNotInspected = snap.notInspected;
-      if (snap.notInspected > 0) {
-        issues.push({
-          level: 'error',
-          code: 'frames-not-inspected',
-          message: `${snap.notInspected} of ${snap.total} frames were not inspected by the end-of-scan DOM snapshot (time budget, frame limit or timeout); inline scripts in them may be missing`,
-        });
-        degrade('partial');
-      }
-      if (snap.failures.length > 0) {
-        issues.push({
-          level: 'warning',
-          code: 'frame-snapshot-failed',
-          message: `Could not inspect ${snap.failures.length} frames (e.g. detached): ${snap.failures.slice(0, 3).join('; ')}`.slice(0, 4_000),
-        });
-      }
-      if (snap.scriptsDropped > 0) resources.scriptsDropped += snap.scriptsDropped;
-    }
-
-    // --- Optional screenshot ---------------------------------------------
-    let screenshotBase64: string | undefined;
-    if (scan.captureScreenshots && state.status !== 'failed') {
-      try {
-        const png = await page.screenshot({ type: 'png', fullPage: false, timeout: 10_000 });
-        if (base64Length(png.length) < MAX_SCREENSHOT_BASE64) {
-          if (budget.tryReserve(base64Length(png.length))) screenshotBase64 = png.toString('base64');
-          else issues.push({ level: 'warning', code: 'screenshot-budget', message: 'Screenshot not stored: the evidence budget was exhausted' });
-        }
-      } catch (error) {
-        issues.push({ level: 'warning', code: 'screenshot-failed', message: messageOf(error) });
-      }
-    }
-
-    // Give queued init-script reports a moment to arrive, then collect network evidence.
-    await page.waitForTimeout(100).catch(() => undefined);
-    const net = await network.finalize(Math.min(30_000, remaining()));
-    if (net.pendingAbandoned > 0) {
-      issues.push({ level: 'warning', code: 'bodies-pending', message: `${net.pendingAbandoned} response bodies were still downloading when the page scan ended` });
-    }
-    if (net.requestsDropped > 0) {
-      issues.push({ level: 'warning', code: 'request-limit', message: `${net.requestsDropped} requests exceeded limits.maxRequestsPerPage and were not recorded` });
-      degrade('partial');
-    }
-    const scriptsDropped = net.scriptsDropped + resources.scriptsDropped;
-    if (scriptsDropped > 0) {
-      issues.push({
-        level: 'error',
-        code: 'script-limit',
-        message: `${scriptsDropped} scripts were not recorded (limits.maxScriptsPerPage or the evidence budget was reached)`,
-      });
-      degrade('partial');
-    }
-
-    const scriptResponses = [...net.scriptResponses];
-    if (request.serviceWorkers.strategy === 'block' && request.serviceWorkers.probeBlockedRegistrations) {
-      const probed = await probeServiceWorkers(context, resources, request, issues, budget);
-      scriptResponses.push(...probed);
-    }
-
-    const dropped = reportDrops({ net, resources, budget, scriptResponses, framesNotInspected, limits, issues, degrade });
-
-    const headersArray = docResponse ? await docResponse.headersArray().catch(() => []) : [];
-    const docHeaders = docResponse ? await docResponse.allHeaders().catch(() => ({})) : {};
-    const cspHeaders = headersArray
-      .filter((h) => h.name.toLowerCase() === 'content-security-policy')
-      .map((h) => h.value.slice(0, 65_536))
-      .slice(0, 32);
-    const cspReportOnlyHeaders = headersArray
-      .filter((h) => h.name.toLowerCase() === 'content-security-policy-report-only')
-      .map((h) => h.value.slice(0, 65_536))
-      .slice(0, 32);
-
-    log.debug({ status: state.status, scripts: scriptResponses.length, dom: resources.domScripts.length + snapshotScripts.length }, 'page scanned');
-
-    return compact<PageEvidence>({
-      pageKey: request.page.key,
-      pageUrl: request.page.url,
-      finalUrl: clampUrl(finalUrl),
-      sensitive: request.page.sensitive,
-      status: state.status,
-      issues: capIssues(issues),
+    return await snapshotAndBuildEvidence({
+      page,
+      context,
+      target: request.page,
+      scan,
+      limits,
+      serviceWorkers: request.serviceWorkers,
+      deadline: request.deadline,
       startedAt,
-      finishedAt: new Date().toISOString(),
-      documentStatus: docResponse?.status(),
-      documentHeaders: filterResponseHeaders(docHeaders),
-      cspHeaders,
-      cspReportOnlyHeaders,
-      frames,
-      scriptResponses,
-      domScripts: [...resources.domScripts, ...snapshotScripts],
-      blobs: resources.blobs,
-      workers: resources.workers,
-      requests: net.requests,
-      requestsDropped: net.requestsDropped,
-      scriptsDropped,
-      consoleErrors,
-      pageErrors,
-      screenshotBase64,
-      dropped,
-      evidenceBytes: budget.used,
+      docResponse,
+      issues,
+      obs,
+      state,
+      network,
+      resources,
+      budget,
+      log,
     });
   } catch (error) {
     log.warn({ err: messageOf(error) }, 'page scan failed unexpectedly');
-    return failedPage(request, startedAt, capIssues([...issues, { level: 'error', code: 'scan-error', message: messageOf(error) }]));
+    return failedPage(request.page, startedAt, capIssues([...issues, { level: 'error', code: 'scan-error', message: messageOf(error) }]));
   } finally {
     await withTimeout(context.close(), 15_000).catch(() => undefined);
   }
+}
+
+export interface CaptureInput {
+  readonly page: Page;
+  readonly context: BrowserContext;
+  readonly target: { readonly key: string; readonly url: string; readonly sensitive: boolean };
+  readonly scan: ScanOptions;
+  readonly limits: Limits;
+  readonly serviceWorkers: { strategy: 'block' | 'allow'; probeBlockedRegistrations: boolean };
+  /** Absolute epoch-ms deadline. */
+  readonly deadline: number;
+  readonly startedAt: string;
+  /** Main-document response of the page being captured (headers/CSP), if known. */
+  readonly docResponse: Response | null;
+  readonly issues: Issue[];
+  readonly obs: PageObservations;
+  readonly state: { status: PageStatus };
+  readonly network: NetworkCollector;
+  readonly resources: ResourceCollector;
+  readonly budget: PageEvidenceBudget;
+  /** Locators masked in the optional screenshot (journeys: typed form fields). */
+  readonly screenshotMask?: readonly Locator[];
+  readonly log: Logger;
+}
+
+/**
+ * Snapshot the current page (DOM of every frame, optional screenshot), finish
+ * the network collector and build the PageEvidence. Shared by plain page scans
+ * and journey captures.
+ */
+export async function snapshotAndBuildEvidence(input: CaptureInput): Promise<PageEvidence> {
+  const { page, context, target, scan, limits, issues, obs, state, network, resources, budget, log, docResponse, deadline } = input;
+  const degrade = degrader(state);
+  const remaining = (): number => Math.max(1_000, deadline - Date.now());
+  const request = { deadline, limits, serviceWorkers: input.serviceWorkers };
+
+  const finalUrl = page.url();
+  try {
+    if (docResponse && new URL(finalUrl).origin !== new URL(target.url).origin) {
+      issues.push({
+        level: 'warning',
+        code: 'cross-origin-navigation',
+        message: `Page ended on a different origin (${redactUrl(finalUrl)}); results describe that page`,
+      });
+    }
+  } catch {
+    // ignore malformed URLs
+  }
+
+  // --- DOM snapshot of every frame -------------------------------------
+  // One wall-clock budget for all frames, never past the scan deadline: a
+  // page with many hung frames must not push the worker past the time at
+  // which the coordinator kills it (which would lose every site's evidence).
+  let frames: FrameEvidence[] = [];
+  let snapshotScripts: DomScriptEvidence[] = [];
+  let framesNotInspected = 0;
+  if (state.status !== 'failed') {
+    const snap = await snapshotFrames(page, Math.min(deadline, Date.now() + SNAPSHOT_BUDGET_MS), limits, budget);
+    frames = snap.frames;
+    snapshotScripts = snap.scripts;
+    framesNotInspected = snap.notInspected;
+    if (snap.notInspected > 0) {
+      issues.push({
+        level: 'error',
+        code: 'frames-not-inspected',
+        message: `${snap.notInspected} of ${snap.total} frames were not inspected by the end-of-scan DOM snapshot (time budget, frame limit or timeout); inline scripts in them may be missing`,
+      });
+      degrade('partial');
+    }
+    if (snap.failures.length > 0) {
+      issues.push({
+        level: 'warning',
+        code: 'frame-snapshot-failed',
+        message: `Could not inspect ${snap.failures.length} frames (e.g. detached): ${snap.failures.slice(0, 3).join('; ')}`.slice(0, 4_000),
+      });
+    }
+    if (snap.scriptsDropped > 0) resources.scriptsDropped += snap.scriptsDropped;
+  }
+
+  // --- Optional screenshot ---------------------------------------------
+  let screenshotBase64: string | undefined;
+  if (scan.captureScreenshots && state.status !== 'failed') {
+    try {
+      const png = await page.screenshot({
+        type: 'png',
+        fullPage: false,
+        timeout: 10_000,
+        ...(input.screenshotMask && input.screenshotMask.length > 0 ? { mask: [...input.screenshotMask] } : {}),
+      });
+      if (base64Length(png.length) < MAX_SCREENSHOT_BASE64) {
+        if (budget.tryReserve(base64Length(png.length))) screenshotBase64 = png.toString('base64');
+        else issues.push({ level: 'warning', code: 'screenshot-budget', message: 'Screenshot not stored: the evidence budget was exhausted' });
+      }
+    } catch (error) {
+      issues.push({ level: 'warning', code: 'screenshot-failed', message: messageOf(error) });
+    }
+  }
+
+  // Give queued init-script reports a moment to arrive, then collect network evidence.
+  await page.waitForTimeout(100).catch(() => undefined);
+  const net = await network.finalize(Math.min(30_000, remaining()));
+  if (net.pendingAbandoned > 0) {
+    issues.push({ level: 'warning', code: 'bodies-pending', message: `${net.pendingAbandoned} response bodies were still downloading when the page scan ended` });
+  }
+  if (net.requestsDropped > 0) {
+    issues.push({ level: 'warning', code: 'request-limit', message: `${net.requestsDropped} requests exceeded limits.maxRequestsPerPage and were not recorded` });
+    degrade('partial');
+  }
+  const scriptsDropped = net.scriptsDropped + resources.scriptsDropped;
+  if (scriptsDropped > 0) {
+    issues.push({
+      level: 'error',
+      code: 'script-limit',
+      message: `${scriptsDropped} scripts were not recorded (limits.maxScriptsPerPage or the evidence budget was reached)`,
+    });
+    degrade('partial');
+  }
+
+  const scriptResponses = [...net.scriptResponses];
+  if (request.serviceWorkers.strategy === 'block' && request.serviceWorkers.probeBlockedRegistrations) {
+    const probed = await probeServiceWorkers(context, resources, request, issues, budget);
+    scriptResponses.push(...probed);
+  }
+
+  const dropped = reportDrops({ net, resources, budget, scriptResponses, framesNotInspected, limits, issues, degrade });
+
+  const headersArray = docResponse ? await docResponse.headersArray().catch(() => []) : [];
+  const docHeaders = docResponse ? await docResponse.allHeaders().catch(() => ({})) : {};
+  const cspHeaders = headersArray
+    .filter((h) => h.name.toLowerCase() === 'content-security-policy')
+    .map((h) => h.value.slice(0, 65_536))
+    .slice(0, 32);
+  const cspReportOnlyHeaders = headersArray
+    .filter((h) => h.name.toLowerCase() === 'content-security-policy-report-only')
+    .map((h) => h.value.slice(0, 65_536))
+    .slice(0, 32);
+
+  log.debug({ status: state.status, scripts: scriptResponses.length, dom: resources.domScripts.length + snapshotScripts.length }, 'page scanned');
+
+  return compact<PageEvidence>({
+    pageKey: target.key,
+    pageUrl: target.url,
+    finalUrl: clampUrl(finalUrl),
+    sensitive: target.sensitive,
+    status: state.status,
+    issues: capIssues(issues),
+    startedAt: input.startedAt,
+    finishedAt: new Date().toISOString(),
+    documentStatus: docResponse?.status(),
+    documentHeaders: filterResponseHeaders(docHeaders),
+    cspHeaders,
+    cspReportOnlyHeaders,
+    frames,
+    scriptResponses,
+    domScripts: [...resources.domScripts, ...snapshotScripts],
+    blobs: [...resources.blobs],
+    workers: [...resources.workers],
+    requests: net.requests,
+    requestsDropped: net.requestsDropped,
+    scriptsDropped,
+    consoleErrors: obs.consoleErrors,
+    pageErrors: obs.pageErrors,
+    screenshotBase64,
+    dropped,
+    evidenceBytes: budget.used,
+  });
 }
 
 interface FrameSnapshotResult {
@@ -510,7 +611,7 @@ function reportDrops(r: DropReport): DroppedEvidence {
 }
 
 /** Keep the number of issues within the evidence schema limit, summarising the rest. */
-function capIssues(issues: Issue[]): Issue[] {
+export function capIssues(issues: Issue[]): Issue[] {
   if (issues.length <= MAX_PAGE_ISSUES) return issues;
   const kept = issues.slice(0, MAX_PAGE_ISSUES - 1);
   kept.push({ level: 'warning', code: 'issues-truncated', message: `${issues.length - kept.length} further issues were not recorded` });
@@ -526,7 +627,7 @@ function capIssues(issues: Issue[]): Issue[] {
 async function probeServiceWorkers(
   context: BrowserContext,
   resources: ResourceCollector,
-  request: PageScanRequest,
+  request: { readonly deadline: number; readonly limits: Limits },
   issues: Issue[],
   budget: PageEvidenceBudget,
 ): Promise<ScriptResponseEvidence[]> {
@@ -583,11 +684,11 @@ async function probeServiceWorkers(
   return out;
 }
 
-function failedPage(request: PageScanRequest, startedAt: string, issues: Issue[]): PageEvidence {
+export function failedPage(target: { readonly key: string; readonly url: string; readonly sensitive: boolean }, startedAt: string, issues: Issue[]): PageEvidence {
   return {
-    pageKey: request.page.key,
-    pageUrl: request.page.url,
-    sensitive: request.page.sensitive,
+    pageKey: target.key,
+    pageUrl: target.url,
+    sensitive: target.sensitive,
     status: 'failed',
     issues,
     startedAt,
@@ -608,7 +709,7 @@ function failedPage(request: PageScanRequest, startedAt: string, issues: Issue[]
   };
 }
 
-function messageOf(error: unknown): string {
+export function messageOf(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   // Playwright errors include multi-line call logs; keep the first line.
   return redactText(text.split('\n')[0] ?? text, 500);

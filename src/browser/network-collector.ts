@@ -227,6 +227,12 @@ export class NetworkCollector {
     evidence.bodyNote = 'Body not stored: the evidence budget (limits.maxEvidenceBytesPerPage / maxEvidenceBytesPerScan) was exhausted';
   }
 
+  /** Stop recording immediately (synchronously); in-flight body captures can still be awaited with finalize(). */
+  detach(): void {
+    for (const d of this.detachers) d();
+    this.detachers = [];
+  }
+
   /** Wait (bounded) for in-flight body captures and detach listeners. */
   async finalize(timeoutMs: number): Promise<{
     requests: RequestEvidence[];
@@ -242,8 +248,7 @@ export class NetworkCollector {
       await Promise.race([Promise.allSettled([...this.pending]), delay(Math.max(0, deadline - Date.now()))]);
     }
     const abandoned = this.pending.size;
-    for (const d of this.detachers) d();
-    this.detachers = [];
+    this.detach();
     return {
       requests: [...this.requests.values()],
       scriptResponses: [...this.scriptResponses],

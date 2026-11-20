@@ -13,3 +13,5 @@ coverage/
 .thirdsentry/evidence/
 # Test scratch
 tests/.tmp/
+journeys.env
+*.storage-state.json

@@ -106,12 +106,15 @@ export interface ContextRequest {
   readonly profile: BrowserProfile;
   readonly serviceWorkers: 'block' | 'allow';
   readonly userAgent?: string;
+  /** Playwright storageState file of an authenticated session (journeys). */
+  readonly storageState?: string;
 }
 
 export async function createIsolatedContext(browser: Browser, request: ContextRequest): Promise<BrowserContext> {
   const context = await browser.newContext({
     ...request.profile.contextOptions,
     ...(request.userAgent ? { userAgent: request.userAgent } : {}),
+    ...(request.storageState ? { storageState: request.storageState } : {}),
     acceptDownloads: false,
     serviceWorkers: request.serviceWorkers,
     ignoreHTTPSErrors: false,

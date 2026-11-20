@@ -9,6 +9,7 @@ import { launchBrowser, type LaunchedBrowser } from './browser-manager.js';
 import { getBrowserProfile } from './browser-profiles.js';
 import { effectiveScanBudget, ScanEvidenceBudget } from './evidence-budget.js';
 import { MemorySink, type EvidenceSink } from './evidence-sink.js';
+import { runJourney } from './journey-runner.js';
 import { scanPage } from './page-scanner.js';
 import { ProxyTagRelay } from './proxy-tag-relay.js';
 
@@ -169,7 +170,8 @@ export async function runCollection(request: CollectRequest, sink: EvidenceSink)
         log.error({ site: site.name, err: message }, 'browser launch failed');
       }
       try {
-        for (const page of site.pages) {
+        // Journey captures (page.journey) are listed after the plain pages and run below.
+        for (const page of site.pages.filter((p) => !p.journey)) {
           if (!launched) {
             await emit(skippedPage(page, 'browser-launch-failed', 'Browser could not be launched'));
             continue;
@@ -196,6 +198,38 @@ export async function runCollection(request: CollectRequest, sink: EvidenceSink)
               budget: evidenceBudget,
             }),
           );
+        }
+        for (const journey of site.journeys ?? []) {
+          const captures = journey.captures;
+          const skipAll = async (code: string, message: string): Promise<void> => {
+            for (const c of captures) await emit(skippedPage(c, code, message)); // sequential: emit() numbers pages in order
+          };
+          if (!launched) {
+            await skipAll('browser-launch-failed', 'Browser could not be launched');
+            continue;
+          }
+          if (pagesBudget < captures.length) {
+            await skipAll('page-limit', 'limits.maxPagesPerScan reached; journey not run');
+            continue;
+          }
+          if (Date.now() > deadline - 5_000) {
+            await skipAll('scan-time-limit', 'limits.maxScanDurationMs reached; journey not run');
+            continue;
+          }
+          pagesBudget -= captures.length;
+          log.info({ site: site.name, journey: journey.name }, 'running journey');
+          const results = await runJourney({
+            browser: launched.browser,
+            profile,
+            site,
+            journey,
+            limits: request.limits,
+            serviceWorkers: request.serviceWorkers,
+            deadline,
+            budget: evidenceBudget,
+          });
+          // Emitted in order, after the whole journey: a capture's evidence is only final once the journey ended.
+          for (const result of results) await emit(result);
         }
       } finally {
         await launched?.close();

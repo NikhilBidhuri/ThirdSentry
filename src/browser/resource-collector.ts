@@ -66,11 +66,32 @@ export class ResourceCollector {
   readonly missedBlobUrls = new Set<string>();
   private reportCalls = 0;
   private readonly inPageStats = new Map<Frame, InPageStats>();
-  private readonly options: ResourceCollectorOptions;
+  private options: ResourceCollectorOptions;
   private page: Page | undefined;
 
   constructor(options: ResourceCollectorOptions) {
     this.options = options;
+  }
+
+  /**
+   * Start a new observation segment (journeys: the span between two captures)
+   * on the same context: recorded items and counters are cleared and later
+   * items are charged to `budget`. The binding and listeners stay installed.
+   */
+  reset(budget?: PageEvidenceBudget): void {
+    this.domScripts.length = 0;
+    this.blobs.length = 0;
+    this.workers.length = 0;
+    this.missedBlobUrls.clear();
+    this.inPageStats.clear();
+    this.scriptsDropped = 0;
+    this.blobsDropped = 0;
+    this.workersDropped = 0;
+    this.reportCallsDropped = 0;
+    this.reportItemsIgnored = 0;
+    this.contentOverBudget = 0;
+    this.reportCalls = 0;
+    if (budget) this.options = { ...this.options, budget };
   }
 
   /** Reports the in-page instrumentation discarded itself, summed over frames. */

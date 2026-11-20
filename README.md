@@ -16,6 +16,7 @@ ThirdSentry visits your pages in a real browser, records every script that runs,
 - **Approved baselines** stored as Git-friendly JSON. Scans never approve anything automatically.
 - **Change detection**: new, removed and modified scripts, new third-party domains, redirect changes, iframe origin changes and new outbound destinations.
 - **Static analysis** with Babel ASTs for behaviours worth reviewing (eval, script injection, cookie/storage/form access, beacons, WebSockets, obfuscation, and sensitive-data-plus-transmission combinations), with explainable risk scoring.
+- **Logged-in journeys**: scripted multi-step flows (login, cart, checkout) with stable `journey:<name>/<capture>` page keys, secrets only via `${THIRDSENTRY_SECRET_<NAME>}`, and a guard against submitting payment forms.
 - **Reports** in JSON, SARIF (GitHub Code Scanning) and HTML; **alerts** via Slack, webhooks, GitHub Issues and email.
 - **CSP linter** for Content-Security-Policy headers.
 - **Hardened by design**: the browser is treated as hostile. All browser traffic goes through an egress proxy that blocks private, loopback, link-local and cloud-metadata addresses per connection (defeating DNS rebinding), and the browser runs in a separate process (or container) without access to your secrets.

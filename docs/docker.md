@@ -92,6 +92,17 @@ Reports are kept in the `reports` volume. To copy them out:
 docker compose run --rm --entrypoint sh tools -c 'cat /work/.thirdsentry/reports/report.html' > report.html
 ```
 
+## Journeys and credentials
+
+Logged-in journeys need credentials in the browser, so the scanner container is the one place that receives them. Keep them out of `.env` (read by the alerter) and in a separate file that only the scanner reads:
+
+```bash
+# journeys.env (next to docker-compose.yml; not committed; chmod 600)
+THIRDSENTRY_SECRET_SHOP_PASSWORD=<password of a dedicated, least-privilege test account>
+```
+
+`docker-compose.yml` attaches it with `env_file` to the `scanner` service only (optional: without the file the scanner has no secrets, and journeys that reference one fail with `journey-secret-missing`). The analyzer, alerter and egress proxy do not get it. Only variables named `THIRDSENTRY_SECRET_*` and referenced by a journey are used. For a `storageState` session file, mount it read-only into the scanner and reference the container path (relative to `thirdsentry.yml`). Use dedicated test accounts, never live payment credentials; see [security.md](security.md#journey-credentials).
+
 ## Environment variables
 
 | Variable | Where | Purpose |
@@ -100,6 +111,7 @@ docker compose run --rm --entrypoint sh tools -c 'cat /work/.thirdsentry/reports
 | `THIRDSENTRY_RUN_ID` | host (compose) | Names the run's evidence file and proxy event record. Set by `run-scan.sh`; default `manual`. |
 | `COMPOSE` | host (`run-scan.sh`) | Override the compose command (default `docker compose`). |
 | Alert variables | `.env` (alerter only) | See [alerts.md](alerts.md#environment-variables). |
+| `THIRDSENTRY_SECRET_*` | `journeys.env` (scanner only) | Journey credentials referenced as `${THIRDSENTRY_SECRET_<NAME>}` in `fill` steps. |
 
 ## Scheduling
 
