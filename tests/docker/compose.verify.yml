@@ -1,53 +1,71 @@
 # Overlay used by tests/docker/verify.sh to exercise the container pipeline
 # against a local fixture site (no real websites are contacted).
 #
-# The verification project (config + fixture server) is baked into a derived
-# image instead of bind-mounted from the host, so the check also works where
+# The verification project (config + fixture server) is baked into derived
+# images instead of bind-mounted from the host, so the check also works where
 # host bind mounts are unavailable (e.g. restricted Docker Desktop file sharing).
 # Networks, capabilities, read-only filesystems and the named volumes of the
 # real docker-compose.yml are kept unchanged.
 
-x-verify-image: &verify-image
-  image: thirdsentry:verify
-  build:
+x-verify-slim: &verify-slim
+  image: thirdsentry:verify-slim
+  build: !override
+    context: ./tests/docker
+    dockerfile_inline: |
+      FROM thirdsentry:slim
+      COPY --chown=pwuser:pwuser project/thirdsentry.yml /work/thirdsentry.yml
+      COPY --chown=pwuser:pwuser fixture-server.mjs /fixture/server.mjs
+
+x-verify-browser: &verify-browser
+  image: thirdsentry:verify-browser
+  build: !override
     context: ./tests/docker
     dockerfile_inline: |
       FROM thirdsentry:local
       COPY --chown=pwuser:pwuser project/thirdsentry.yml /work/thirdsentry.yml
-      COPY --chown=pwuser:pwuser fixture-server.mjs /fixture/server.mjs
 
 services:
   fixture:
-    <<: *verify-image
+    <<: *verify-slim
     entrypoint: ["node", "/fixture/server.mjs"]
     read_only: true
     cap_drop: [ALL]
     networks: [egress]
 
   egress-proxy:
-    <<: *verify-image
+    <<: *verify-slim
     depends_on: [fixture]
-    volumes: !reset []
+    volumes: !override
+      - proxy-events:/proxy-events
 
   scanner:
-    <<: *verify-image
+    <<: *verify-browser
     volumes: !override
       - evidence:/evidence
 
   analyzer:
-    <<: *verify-image
+    <<: *verify-slim
     volumes: !override
       - evidence:/evidence:ro
+      - proxy-events:/proxy-events:ro
       - reports:/work/.thirdsentry/reports
       - state:/work/.thirdsentry/state
       - cache:/work/.thirdsentry/cache
       - baselines:/work/.thirdsentry/baselines:ro
 
   alerter:
-    <<: *verify-image
+    <<: *verify-slim
     volumes: !override
       - reports:/work/.thirdsentry/reports:ro
       - state:/work/.thirdsentry/state
+
+  tools:
+    <<: *verify-slim
+    volumes: !override
+      - baselines:/work/.thirdsentry/baselines
+      - reports:/work/.thirdsentry/reports
+      - state:/work/.thirdsentry/state
+      - cache:/work/.thirdsentry/cache
 
 volumes:
   baselines:

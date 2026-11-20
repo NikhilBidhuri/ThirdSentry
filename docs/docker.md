@@ -23,9 +23,9 @@ The Docker deployment runs ThirdSentry as four containers, one per trust boundar
 
 | Container | Network | Mounts | Secrets |
 | --- | --- | --- | --- |
-| `egress-proxy` | `scan-internal` + `egress` | config (ro) | none |
-| `scanner` | `scan-internal` only (no internet route) | config (ro), evidence volume | none |
-| `analyzer` | none | config (ro), **baselines (ro)**, evidence (ro), reports, state, cache | none |
+| `egress-proxy` | `scan-internal` + `egress` | config (ro), **proxy-events (rw)** | none |
+| `scanner` | `scan-internal` only (no internet route) | config (ro), evidence volume (not proxy-events) | none |
+| `analyzer` | none | config (ro), **baselines (ro)**, evidence (ro), **proxy-events (ro)**, reports, state, cache | none |
 | `alerter` | `egress` | config (ro), reports (ro), state | `.env` |
 | `tools` | none | config (ro), baselines (rw), reports, state, cache | none |
 
@@ -33,14 +33,20 @@ All containers run as the unprivileged `pwuser`, with a read-only root filesyste
 
 The egress proxy enforces the same per-connection policy as in local mode (see [security.md](security.md)). Because the scanner's network is `internal`, Docker itself refuses any connection that does not go through the proxy, so network restrictions are applied at the container network layer, not only by URL checks. Note that the proxy also blocks the private addresses Docker uses for its networks, so the browser cannot reach the other containers.
 
+**Trusted connection evidence.** The scanner runs hostile page code, so what it reports about blocked connections is not trusted. The scanner tags every connection it makes through the proxy with `<run-id>.<site>` (a Basic `Proxy-Authorization` user name; it is attribution only, the proxy never requires it), the proxy appends the connection events to `/proxy-events/<run-id>.ndjson` (a volume the scanner cannot mount; size-capped, at most 5,000 blocked and 5,000 allowed events per site, dropped events are counted and reported), and `analyze --proxy-events <file>` replaces each site's connection events with that record. Without `--proxy-events` the scanner's own events are used and a warning issue is added. Limitation: a fully compromised scanner can mis-tag its connections and so hide them from the record, but it cannot forge or alter events recorded under the correct tag. If the record is missing for a run, the scan gets an error issue (`proxy-events-missing`). A page that fetches a blocked plain-`http://` address receives the proxy's 403 as an ordinary response, which the analyzer's per-request "blocked" marking does not recognise; HTTPS (CONNECT) blocks are marked.
+
+**Configuration changes.** The egress proxy reads `thirdsentry.yml` only when it starts. `scripts/run-scan.sh` passes a hash of the file to the proxy container, so the proxy is recreated automatically when the file changed. If you run `docker compose` by hand, use `docker compose up -d --force-recreate egress-proxy` after editing the configuration.
+
+**Images.** One Dockerfile, two targets: `slim` (`thirdsentry:slim`, Node.js only, about 400 MB) runs the egress proxy, analyzer, alerter and tools; `browser` (`thirdsentry:local`, Playwright image, about 3.7 GB) runs only the scanner. The scanner waits for the proxy's healthcheck before it starts.
+
 **Chromium sandbox:** inside the hardened scanner container (no capabilities, `no-new-privileges`), Chromium's own namespace sandbox cannot start, so the scanner runs with `--no-chromium-sandbox` and relies on the container boundary. If you prefer to keep Chromium's sandbox as an additional layer, run the scanner with Playwright's [seccomp profile](https://playwright.dev/docs/docker) and remove `--no-chromium-sandbox`; that requires relaxing the container settings and is not the default.
 
 ## Setup
 
-1. Build the image (the tag must stay in sync with the pinned Playwright version):
+1. Build the images (the Playwright tag must stay in sync with the pinned Playwright version; the slim image's Node.js major must match the Playwright image's):
 
    ```bash
-   docker build -t thirdsentry:local .
+   docker compose build        # or: docker build --target slim -t thirdsentry:slim . && docker build --target browser -t thirdsentry:local .
    ```
 
 2. Create a project directory with your configuration and baselines (or use `examples/project`):
@@ -65,7 +71,7 @@ The egress proxy enforces the same per-connection policy as in local mode (see [
    ./scripts/run-scan.sh
    ```
 
-   This starts the proxy (long-running), then runs `scanner` → `analyzer` → `alerter`. The exit code is the analyzer's (`0` ok, `1` findings over threshold, `3` incomplete scan). Alert failures are reported but do not change it.
+   This starts the proxy (long-running, waits until it is healthy), then runs `scanner` → `analyzer` → `alerter`. Every run gets its own run id, evidence file and proxy event record, and runs are serialised with a lock (`flock`, or a lock directory where `flock` is missing; `THIRDSENTRY_LOCK_WAIT` seconds, default 3600). The per-run files are deleted after a successful analysis; after a failure they are kept (newest `THIRDSENTRY_KEEP_FAILED`, default 10). The exit code is the analyzer's (`0` ok, `1` findings over threshold, `3` incomplete scan). Alert failures are reported but do not change it.
 
 ## First baseline and maintenance
 
@@ -91,6 +97,7 @@ docker compose run --rm --entrypoint sh tools -c 'cat /work/.thirdsentry/reports
 | Variable | Where | Purpose |
 | --- | --- | --- |
 | `THIRDSENTRY_PROJECT_DIR` | host (compose) | Directory with `thirdsentry.yml` and `.thirdsentry/baselines`. Default `./examples/project`. |
+| `THIRDSENTRY_RUN_ID` | host (compose) | Names the run's evidence file and proxy event record. Set by `run-scan.sh`; default `manual`. |
 | `COMPOSE` | host (`run-scan.sh`) | Override the compose command (default `docker compose`). |
 | Alert variables | `.env` (alerter only) | See [alerts.md](alerts.md#environment-variables). |
 
@@ -105,11 +112,12 @@ See [cron.md](cron.md) for cron and systemd timers.
 - the scan completes and discovers the fixture's scripts,
 - the scanner cannot reach the internet directly,
 - the proxy refuses cloud-metadata (`169.254.169.254`, `metadata.google.internal`), private (`10.0.0.1`) and disallowed-port destinations, including the other containers,
+- a page that fetches the cloud-metadata address produces a `blocked-destination` signal in the analyzer's report, taken from the proxy's event record (the scanner cannot see that volume),
 - the analyzer has no network access,
 - no alert credentials are present in the scanner's environment.
 
 ```bash
-docker build -t thirdsentry:local . && sh tests/docker/verify.sh
+sh tests/docker/verify.sh      # builds both image targets first
 ```
 
 The verification overlay bakes its fixture configuration into a derived image instead of bind-mounting it, so it also runs where host file sharing is restricted; networks, capabilities, read-only filesystems and volumes are those of the real `docker-compose.yml`.

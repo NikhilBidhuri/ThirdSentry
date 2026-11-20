@@ -27,7 +27,11 @@ export interface NetworkPolicyOptions {
    * hosts in restricted environments. Results are still validated.
    */
   readonly resolverOverrides: Readonly<Record<string, string>>;
+  /** Maximum time a DNS lookup may take before the destination is refused. Default 5000 ms. */
+  readonly dnsTimeoutMs?: number;
 }
+
+export const DEFAULT_DNS_TIMEOUT_MS = 5_000;
 
 export type DestinationDecision =
   | { readonly allowed: true; readonly host: string; readonly port: number; readonly address: string; readonly family: 4 | 6 }
@@ -133,7 +137,7 @@ export class NetworkPolicy {
       addresses = [{ address: override, family: isIP(override) }];
     } else {
       try {
-        addresses = await this.resolver(host);
+        addresses = await withTimeout(this.resolver(host), this.options.dnsTimeoutMs ?? DEFAULT_DNS_TIMEOUT_MS);
       } catch (error) {
         return {
           allowed: false,
@@ -155,4 +159,29 @@ export class NetworkPolicy {
     }
     return firstAllowed as DestinationDecision;
   }
+}
+
+class DnsTimeoutError extends Error {
+  readonly code = 'ETIMEOUT';
+}
+
+/**
+ * Bound a DNS lookup. The underlying getaddrinfo call cannot be cancelled and
+ * keeps its libuv thread until the system resolver gives up, but the caller
+ * (and the connection waiting on it) is released.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new DnsTimeoutError(`DNS lookup timed out after ${ms} ms`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
 }

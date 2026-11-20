@@ -31,6 +31,8 @@ const IPV4_RANGES: readonly Range[] = [
   { cidr: '127.0.0.0/8', reason: 'loopback' },
   { cidr: '169.254.169.254/32', reason: 'cloud-metadata' }, // AWS, GCP, Azure, OpenStack
   { cidr: '169.254.170.2/32', reason: 'cloud-metadata' }, // AWS ECS task metadata
+  { cidr: '169.254.170.23/32', reason: 'cloud-metadata' }, // AWS EKS Pod Identity agent
+  { cidr: '168.63.129.16/32', reason: 'cloud-metadata' }, // Azure WireServer / host agent (a public address)
   { cidr: '169.254.0.0/16', reason: 'link-local' },
   { cidr: '172.16.0.0/12', reason: 'private' },
   { cidr: '192.0.0.192/32', reason: 'cloud-metadata' }, // Oracle Cloud
@@ -49,6 +51,7 @@ const IPV6_RANGES: readonly Range[] = [
   { cidr: '::1/128', reason: 'loopback' },
   { cidr: '::/128', reason: 'unspecified' },
   { cidr: 'fd00:ec2::254/128', reason: 'cloud-metadata' }, // AWS IMDS over IPv6
+  { cidr: 'fd00:ec2::23/128', reason: 'cloud-metadata' }, // AWS EKS Pod Identity agent over IPv6
   { cidr: 'fc00::/7', reason: 'private' },
   { cidr: 'fe80::/10', reason: 'link-local' },
   { cidr: 'fec0::/10', reason: 'private' }, // deprecated site-local
@@ -58,6 +61,8 @@ const IPV6_RANGES: readonly Range[] = [
   { cidr: '2001:10::/28', reason: 'reserved' },
   { cidr: '2001:20::/28', reason: 'reserved' },
   { cidr: '2001::/32', reason: 'reserved' }, // Teredo tunnelling (embeds arbitrary IPv4)
+  { cidr: '2001:2::/48', reason: 'reserved' }, // benchmarking
+  { cidr: '3fff::/20', reason: 'documentation' }, // RFC 9637
   { cidr: '::/96', reason: 'reserved' }, // deprecated IPv4-compatible
 ];
 
@@ -72,6 +77,14 @@ function buildList(ranges: readonly Range[], family: 'ipv4' | 'ipv6'): Array<{ l
 
 const V4 = buildList(IPV4_RANGES, 'ipv4');
 const V6 = buildList(IPV6_RANGES, 'ipv6');
+
+/**
+ * IPv6 is allowlisted: only global unicast (2000::/3) is routable on the
+ * internet. Everything outside it (e.g. SRv6 SIDs 5f00::/16, unassigned
+ * space) is refused even when no specific range above matches.
+ */
+const IPV6_GLOBAL_UNICAST = new BlockList();
+IPV6_GLOBAL_UNICAST.addSubnet('2000::', 3, 'ipv6');
 
 export interface IpCheckResult {
   readonly allowed: boolean;
@@ -144,6 +157,7 @@ function checkV4(address: string): IpBlockReason | undefined {
 function checkV6(address: string): IpBlockReason | undefined {
   const bare = stripZone(address);
   for (const entry of V6) if (entry.list.check(bare, 'ipv6')) return entry.reason;
+  if (!IPV6_GLOBAL_UNICAST.check(bare, 'ipv6')) return 'reserved';
   return undefined;
 }
 

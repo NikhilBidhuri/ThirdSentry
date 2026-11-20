@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Limits, NetworkSecurityConfig } from '../config/schema.js';
 import type { ResolvedSite } from '../config/loader.js';
-import { EgressProxy, type ProxyConnectionEvent } from '../security/egress-proxy.js';
+import { EgressProxy } from '../security/egress-proxy.js';
 import { NetworkPolicy } from '../security/network-policy.js';
 import { EVIDENCE_SCHEMA_VERSION, type Issue, type PageEvidence, type PageStatus, type ScanEvidence } from '../types/evidence.js';
 import { getLogger } from '../utils/logger.js';
@@ -11,6 +11,7 @@ import { getBrowserProfile } from './browser-profiles.js';
 import { effectiveScanBudget, ScanEvidenceBudget } from './evidence-budget.js';
 import { MemorySink, type EvidenceSink } from './evidence-sink.js';
 import { scanPage } from './page-scanner.js';
+import { ProxyTagRelay } from './proxy-tag-relay.js';
 
 /**
  * Everything the browser worker needs. Deliberately excludes alert settings,
@@ -24,6 +25,8 @@ export interface CollectRequest {
   readonly serviceWorkers: { strategy: 'block' | 'allow'; probeBlockedRegistrations: boolean };
   readonly chromiumSandbox: boolean;
   readonly isolation: 'process' | 'none' | 'container';
+  /** Run id used to tag connections to an external egress proxy (default: scanId). */
+  readonly proxyRunId?: string;
 }
 
 export function newScanId(now = new Date()): string {
@@ -94,10 +97,15 @@ export async function runCollection(request: CollectRequest, sink: EvidenceSink)
   });
 
   let proxy: EgressProxy | undefined;
+  let relay: ProxyTagRelay | undefined;
   let proxyUrl: string;
   if (request.network.externalProxy) {
-    proxyUrl = request.network.externalProxy;
-    issues.push({ level: 'info', code: 'external-proxy', message: 'Using external egress proxy; blocked-connection details are logged by the proxy container' });
+    // Connections are tagged <runId>.<site>; the egress proxy records them and
+    // the analyzer reads that trusted record (analyze --proxy-events).
+    const runId = request.proxyRunId ?? request.scanId;
+    relay = new ProxyTagRelay({ upstream: request.network.externalProxy, runId });
+    proxyUrl = (await relay.start()).url;
+    issues.push({ level: 'info', code: 'external-proxy', message: `Using external egress proxy; connection events are recorded by the proxy under run id ${runId}` });
   } else {
     proxy = new EgressProxy({
       policy,
@@ -105,7 +113,7 @@ export async function runCollection(request: CollectRequest, sink: EvidenceSink)
       connectTimeoutMs: request.network.connectTimeoutMs,
       idleTimeoutMs: request.network.idleTimeoutMs,
       maxConnections: 512,
-      maxRecordedEvents: 20_000,
+      maxRecordedEvents: 5_000, // per site, for blocked and allowed events each
     });
     proxyUrl = (await proxy.start()).url;
   }
@@ -147,7 +155,7 @@ export async function runCollection(request: CollectRequest, sink: EvidenceSink)
         emulation: profile.emulation,
         startedAt: siteStarted,
       });
-      const eventStart = proxy?.getEvents().events.length ?? 0;
+      relay?.setSite(site.name);
       let launched: LaunchedBrowser | undefined;
       try {
         launched = await launchBrowser({ profile, proxyUrl, chromiumSandbox: request.chromiumSandbox });
@@ -196,7 +204,9 @@ export async function runCollection(request: CollectRequest, sink: EvidenceSink)
       } finally {
         await launched?.close();
       }
-      const events: ProxyConnectionEvent[] = proxy ? proxy.getEvents().events.slice(eventStart) : [];
+      // Per-site accounting: drainEvents() returns this site's events (capped per
+      // site by the proxy) and how many were dropped, then resets for the next site.
+      const proxyEvents = proxy ? proxy.drainEvents() : { events: [], dropped: 0 };
       await sink.siteFinished(siteIndex, {
         name: site.name,
         url: site.url,
@@ -208,12 +218,13 @@ export async function runCollection(request: CollectRequest, sink: EvidenceSink)
         issues: siteIssues,
         startedAt: siteStarted,
         finishedAt: new Date().toISOString(),
-        proxyEvents: events.filter((e) => !e.allowed).slice(0, 5_000).concat(events.filter((e) => e.allowed).slice(0, 5_000)),
-        proxyEventsDropped: Math.max(0, events.length - 10_000),
+        proxyEvents: proxyEvents.events,
+        proxyEventsDropped: proxyEvents.dropped,
       });
     }
   } finally {
     await proxy?.stop();
+    await relay?.stop();
   }
 
   await sink.end({ finishedAt: new Date().toISOString(), issues });
