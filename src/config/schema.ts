@@ -149,14 +149,20 @@ export const ServiceWorkerSchema = z
 
 export const RetentionSchema = z
   .object({
-    /** Store script bodies in .thirdsentry/cache/content (needed for code diffs). Off by default. */
-    storeScriptContent: z.boolean().default(false),
-    /** Number of scan reports to keep. */
+    /**
+     * Which script bodies to keep in .thirdsentry/cache/content (needed for code diffs):
+     * `none`, `findings` (approved versions and versions behind findings; default) or `all`.
+     */
+    scriptContent: z.enum(['none', 'findings', 'all']).optional(),
+    /** Deprecated: `true` = scriptContent `all`, `false` = `none`. */
+    storeScriptContent: z.boolean().optional(),
+    /** Number of scan reports to keep per site. */
     maxScanReports: z.number().int().min(1).max(100_000).default(50),
     /** Delete scan reports and cached content older than this many days. */
     maxAgeDays: z.number().int().min(1).max(3650).default(90),
   })
-  .strict();
+  .strict()
+  .refine((r) => r.scriptContent === undefined || r.storeScriptContent === undefined, 'set either retention.scriptContent or the deprecated retention.storeScriptContent, not both');
 
 export const RiskSchema = z
   .object({

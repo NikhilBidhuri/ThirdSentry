@@ -1,15 +1,18 @@
-import { relative } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { loadBaseline } from '../baseline/baseline-manager.js';
 import type { ResolvedConfig } from '../config/loader.js';
-import { baselinePath } from '../storage/paths.js';
+import { writeReports, type ReportFormat, type WrittenReports } from '../reporting/index.js';
+import { ensureScanReportDir } from '../storage/filesystem-store.js';
+import { assertSiteName, baselinePath } from '../storage/paths.js';
 import { SEVERITY_ORDER, type Finding, type Severity } from '../types/findings.js';
 import type { ScanResult } from '../types/index.js';
 import type { AnalysisReport, SiteComparisonSummary } from '../types/report.js';
-import { writeJsonAtomic } from '../utils/fs.js';
+import { ConfigError } from '../utils/errors.js';
+import { ExitCode, type ExitCodeValue } from '../utils/exit-codes.js';
+import { copyFileAtomic, writeJsonAtomic } from '../utils/fs.js';
 import { toolVersion } from '../utils/version.js';
 import { compareSite, type ComparisonResult } from './comparison-engine.js';
 import { buildFindings } from './finding-engine.js';
-import { join } from 'node:path';
 import { applySuppressions } from './suppressions.js';
 import { annotateFindings, loadFindingState, saveFindingState, trackFindings } from './dedup-state.js';
 import { getLogger } from '../utils/logger.js';
@@ -66,7 +69,27 @@ function headline(report: Omit<AnalysisReport, 'headline'>): string {
   return parts.join(' ');
 }
 
+/**
+ * Every site in a scan result must be a site configured in thirdsentry.yml.
+ * Site names select baseline paths, and scan results / evidence may be crafted
+ * or stale (renamed site), so an unknown name fails loudly instead of being
+ * compared against nothing or mapped to an unexpected path.
+ */
+export function assertScanSitesConfigured(resolved: ResolvedConfig, siteNames: readonly string[], source: string): void {
+  const configured = new Set(resolved.config.sites.map((s) => s.name));
+  for (const name of siteNames) {
+    assertSiteName(name);
+    if (!configured.has(name)) {
+      throw new ConfigError(
+        `${source} contains site "${name}", which is not configured in ${resolved.configPath}`,
+        `Configured sites: ${[...configured].join(', ')}. If the site was renamed, scan again.`,
+      );
+    }
+  }
+}
+
 export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, options: AnalysisOptions): Promise<AnalysisOutcome> {
+  assertScanSitesConfigured(resolved, scan.sites.map((s) => s.name), `Scan ${scan.scanId}`);
   const now = options.now ?? new Date();
   const comparisons = new Map<string, ComparisonResult>();
   const findings: Finding[] = [];
@@ -161,15 +184,106 @@ export function reportJsonPath(resolved: ResolvedConfig): string {
   return join(resolved.paths.reports, 'report.json');
 }
 
+/**
+ * Write report.json for a scan to reports/scans/<scan-id>/report.json and
+ * atomically update the "latest" copy reports/report.json (read by the
+ * `alert` command and the GitHub Action).
+ */
 export async function saveReportJson(resolved: ResolvedConfig, report: AnalysisReport, extraPath?: string): Promise<string> {
+  const scanDir = await ensureScanReportDir(resolved.paths, report.scanId);
+  const perScan = join(scanDir, 'report.json');
+  await writeJsonAtomic(perScan, report);
   const path = reportJsonPath(resolved);
-  await writeJsonAtomic(path, report);
-  if (extraPath) await writeJsonAtomic(extraPath, report);
+  await copyFileAtomic(perScan, path);
+  if (extraPath) await copyFileAtomic(perScan, extraPath);
   return path;
+}
+
+export interface PublishedReports extends WrittenReports {
+  /** Directory with this scan's reports (reports/scans/<scan-id>/). */
+  readonly scanReportDir: string;
+  /** Per-scan copies (stable paths, not overwritten by later scans). */
+  readonly perScan: WrittenReports;
+}
+
+/**
+ * Write reports for one scan: first to reports/scans/<scan-id>/, then as
+ * atomically replaced "latest" copies in `outputDir` (default reports/).
+ * With `alwaysJson`, report.json is always written and reports/report.json in
+ * the storage directory is always updated, whatever the formats or outputDir.
+ */
+export async function publishReports(
+  resolved: ResolvedConfig,
+  report: AnalysisReport,
+  scan: ScanResult | undefined,
+  formats: readonly ReportFormat[],
+  options: { outputDir?: string; alwaysJson?: boolean } = {},
+): Promise<PublishedReports> {
+  const scanDir = await ensureScanReportDir(resolved.paths, report.scanId);
+  const perScanFormats: ReportFormat[] = options.alwaysJson && !formats.includes('json') ? [...formats, 'json'] : [...formats];
+  const perScan = await writeReports(resolved, report, scan, perScanFormats, scanDir);
+  const latestDir = options.outputDir ? (isAbsolute(options.outputDir) ? options.outputDir : resolve(process.cwd(), options.outputDir)) : resolved.paths.reports;
+  const latest: { json?: string; sarif?: string; html?: string } = {};
+  for (const format of formats) {
+    const source = perScan[format];
+    if (!source) continue;
+    const target = join(latestDir, basename(source));
+    await copyFileAtomic(source, target);
+    latest[format] = target;
+  }
+  if (options.alwaysJson && perScan.json) {
+    const storageJson = reportJsonPath(resolved);
+    if (latest.json === undefined || resolve(latest.json) !== resolve(storageJson)) await copyFileAtomic(perScan.json, storageJson);
+  }
+  return { ...latest, scanReportDir: scanDir, perScan };
 }
 
 /** Exit-code decision for --fail-on. */
 export function exceedsThreshold(report: AnalysisReport, failOn: Severity | 'none'): boolean {
   if (failOn === 'none') return false;
   return report.findings.some((f) => !f.suppressed && SEVERITY_ORDER[f.severity] >= SEVERITY_ORDER[failOn]);
+}
+
+/** Sites in the report that have no approved baseline (nothing was compared for them). */
+export function sitesWithoutBaseline(report: AnalysisReport): string[] {
+  return report.sites.filter((s) => !s.baseline.exists).map((s) => s.name);
+}
+
+export interface ExitPolicy {
+  readonly failOn: Severity | 'none';
+  /** Exit 0 instead of 3 when a scanned site has no baseline yet. */
+  readonly allowMissingBaseline?: boolean;
+  /** Exit 4 when alert delivery failed. */
+  readonly failOnAlertError?: boolean;
+  readonly alertFailed?: boolean;
+}
+
+/**
+ * Exit code of `scan` and `analyze` (shared so both paths behave the same):
+ *
+ *   1  a finding met the --fail-on threshold (most urgent, takes precedence)
+ *   4  alert delivery failed and --fail-on-alert-error was given
+ *   3  the scan was incomplete, or a scanned site has no baseline (unless
+ *      --allow-missing-baseline): nothing was compared for that site, so a
+ *      green result would be meaningless
+ *   0  otherwise
+ */
+export function analysisExitCode(report: AnalysisReport, policy: ExitPolicy): ExitCodeValue {
+  if (exceedsThreshold(report, policy.failOn)) return ExitCode.FindingsThresholdExceeded;
+  if (policy.failOnAlertError && policy.alertFailed) return ExitCode.InternalError;
+  if (report.scanStatus !== 'complete') return ExitCode.ScanIncomplete;
+  if (!policy.allowMissingBaseline && sitesWithoutBaseline(report).length > 0) return ExitCode.ScanIncomplete;
+  return ExitCode.Ok;
+}
+
+/** First-run guidance (printed to stderr) when scanned sites have no baseline. */
+export function missingBaselineNotice(report: AnalysisReport, allowMissingBaseline: boolean): string | undefined {
+  const missing = report.sites.filter((s) => !s.baseline.exists);
+  if (missing.length === 0) return undefined;
+  return [
+    `No approved baseline for ${missing.map((s) => s.name).join(', ')} (expected at ${missing.map((s) => s.baseline.path).join(', ')}), so nothing was compared.`,
+    'First run? Review the scan above, then approve it with "thirdsentry baseline" and commit the baseline file.',
+    'Otherwise check that the baselines are committed, that storageDir points to them and that the site was not renamed.',
+    allowMissingBaseline ? '(--allow-missing-baseline: not treated as an error.)' : 'Exiting with code 3. Pass --allow-missing-baseline to accept sites without a baseline.',
+  ].join('\n');
 }

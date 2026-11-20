@@ -1,3 +1,4 @@
+import { scriptContentMode } from '../../src/storage/filesystem-store.js';
 import { describe, expect, it } from 'vitest';
 import { createNetworkPolicy, parseConfigText, resolveSites } from '../../src/config/loader.js';
 import { ConfigError } from '../../src/utils/errors.js';
@@ -22,7 +23,7 @@ describe('configuration', () => {
     expect(cfg.security.network.allowedPorts).toEqual([80, 443]);
     expect(cfg.security.isolation.mode).toBe('process');
     expect(cfg.serviceWorkers.strategy).toBe('block');
-    expect(cfg.retention.storeScriptContent).toBe(false);
+    expect(scriptContentMode(cfg.retention)).toBe('findings');
   });
 
   it('resolves pages, sensitivity and per-site overrides', () => {
