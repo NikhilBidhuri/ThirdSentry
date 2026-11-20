@@ -110,6 +110,8 @@ services:
     volumes:
       - *config-volume
       - ${THIRDSENTRY_PROJECT_DIR:-./examples/project}/.thirdsentry/baselines:/work/.thirdsentry/baselines:ro
+      # PCI DSS 6.4.3 script inventory (docs/pci.md), committed next to the baselines.
+      - ${THIRDSENTRY_PROJECT_DIR:-./examples/project}/.thirdsentry/inventory:/work/.thirdsentry/inventory:ro
       - evidence:/evidence:ro
       - proxy-events:/proxy-events:ro
       - reports:/work/.thirdsentry/reports
@@ -184,6 +186,7 @@ services:
     volumes:
       - *config-volume
       - ${THIRDSENTRY_PROJECT_DIR:-./examples/project}/.thirdsentry/baselines:/work/.thirdsentry/baselines
+      - ${THIRDSENTRY_PROJECT_DIR:-./examples/project}/.thirdsentry/inventory:/work/.thirdsentry/inventory
       - reports:/work/.thirdsentry/reports
       - state:/work/.thirdsentry/state
       - cache:/work/.thirdsentry/cache

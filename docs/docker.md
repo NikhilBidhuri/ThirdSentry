@@ -85,7 +85,7 @@ docker compose run --rm tools baseline        # approve (asks for confirmation; 
 docker compose run --rm -it tools baseline
 ```
 
-`tools` is the only container that can write baselines. The files land in `$THIRDSENTRY_PROJECT_DIR/.thirdsentry/baselines/`; commit them to version control after review.
+`tools` is the only container that can write baselines and the PCI script inventory (`.thirdsentry/inventory/`, mounted read-only into the analyzer; see [pci.md](pci.md)). The files land in `$THIRDSENTRY_PROJECT_DIR/.thirdsentry/baselines/`; commit them to version control after review.
 
 Reports are kept in the `reports` volume. To copy them out:
 

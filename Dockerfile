@@ -42,7 +42,7 @@ COPY LICENSE README.md ./
 # are interchangeable between both images.
 RUN groupadd --gid 1001 pwuser \
  && useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin pwuser \
- && mkdir -p /work/.thirdsentry/reports /work/.thirdsentry/state /work/.thirdsentry/cache /work/.thirdsentry/cache/vulndb /work/.thirdsentry/baselines /evidence /proxy-events \
+ && mkdir -p /work/.thirdsentry/reports /work/.thirdsentry/state /work/.thirdsentry/cache /work/.thirdsentry/cache/vulndb /work/.thirdsentry/baselines /work/.thirdsentry/inventory /evidence /proxy-events \
  && chown -R pwuser:pwuser /work /evidence /proxy-events
 USER pwuser
 WORKDIR /work
