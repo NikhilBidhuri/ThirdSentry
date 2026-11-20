@@ -91,6 +91,18 @@ export interface ScriptResource {
   readonly firstSeenAt: string;
   /** Static-analysis indicators (Phase 3). */
   indicators?: IndicatorSummary;
+  /** Known JavaScript libraries recognised in this resource (name, version, how, how sure). */
+  libraries?: readonly DetectedLibrary[];
+}
+
+export type LibraryDetectionMethod = 'banner' | 'code' | 'url' | 'content-hash';
+
+export interface DetectedLibrary {
+  /** Canonical lower-case library name, e.g. "jquery". */
+  readonly name: string;
+  readonly version: string;
+  readonly method: LibraryDetectionMethod;
+  readonly confidence: 'low' | 'medium' | 'high';
 }
 
 export interface IndicatorMatch {

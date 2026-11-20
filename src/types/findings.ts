@@ -35,7 +35,8 @@ export type ChangeKind =
   | 'coverage-degraded'
   | 'scan-unhealthy'
   | 'policy-accepted-update'
-  | 'pinned-hash-mismatch';
+  | 'pinned-hash-mismatch'
+  | 'vulnerable-library';
 
 /** A single contribution to a finding's risk score, shown to users verbatim. */
 export interface Signal {

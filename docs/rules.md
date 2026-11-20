@@ -261,6 +261,10 @@ HIGH confidence high  Third-party script changed on a sensitive page  TS-3f1c0a9
 | `pinned-hash-mismatch` | 55 | A pinned script does not match any allowed hash, whatever the baseline says (behavioural) |
 | `policy-accepted-update` | 0 | The content changed, which a script policy explicitly accepts |
 | `script-references-new-destination` | 25 | The changed script itself references the new outbound destination (behavioural) |
+| `vulnerable-library-low` | 20 | A loaded library has a known low-severity vulnerability |
+| `vulnerable-library-medium` | 40 | A loaded library has a known medium-severity vulnerability |
+| `vulnerable-library-high` | 60 | A loaded library has a known high-severity vulnerability |
+| `vulnerable-library-critical` | 80 | A loaded library has a known critical vulnerability |
 
 Rule matches add signals named `new-rule:<rule id>` (or `rule:<rule id>` at half weight when the previous version was not analysed). Rules with a weight of 10 or more count as behavioural and move a finding into the `suspicious` category.
 
@@ -313,6 +317,25 @@ suppressions:
 ## Coverage findings
 
 A page that fails to scan, is scanned only partly (time budget, script/request limits, navigation timeout) or is in the baseline but was not scanned at all (page limit, unreachable site) produces a `page-failed` or `coverage-degraded` finding. Without it, every script change on that page would be invisible. On `sensitivePages` the `sensitive-page` signal is added, so these rate higher. The ID is derived from site, page, kind and the sorted list of reasons (issue codes), so the same ongoing problem alerts once; a different reason, or escalation from partial to failed, is a new finding.
+
+## vulnerable-library
+
+A `vulnerable-library` finding says that a recognised JavaScript library, in a version with known advisories, is loaded by the page (see [libraries.md](libraries.md) for how libraries are recognised and where the data comes from). Unlike the change kinds above it is not a difference from the baseline: a vulnerable library is reported whether or not it was approved, for sites with and without a baseline. Approving a baseline does not silence it; suppress it instead.
+
+- **One finding per resource and library version**, listing every advisory (CVE ID, severity, summary) that affects that version.
+- **Severity** is the highest advisory severity (`low`, `medium`, `high`, `critical`, from the database). On a page marked as `sensitivePages` it is raised by one level (`sensitive-page` signal, "severity raised from medium to high"). The `vulnerable-library-*` weights above give the score; `risk.weights` can override them. `libraries.minSeverity` hides advisories below a level.
+- **Confidence** comes from the detection method: `high` for banners and content hashes, `medium` for version assignments in code and for versions read from a URL, `low` for weak URL hints. A finding based on a URL says that the file may differ from its name.
+- **Stable ID**: derived from site, resource identity, library, version and the sorted set of advisory IDs. It alerts once; it changes (and alerts again) only when the library version, the resource, or the set of matching advisories changes, for example when a database update adds an advisory. The same code on another page keeps its ID.
+- **Next steps**: the lowest version that fixes all listed advisories (the highest `below` bound among them), links (NVD and the advisory's references) and how to suppress. Reachability of the vulnerable code is not assessed.
+- **Suppress** like any finding (`kind: vulnerable-library`, `resource`, `domain`, `id`, `site`; a reason is required, `expires` is recommended):
+
+```yaml
+suppressions:
+  - kind: vulnerable-library
+    resource: https://legacy.example.com/js/jquery-1.12.4.min.js
+    reason: Admin-only page behind VPN; migration tracked in SEC-204
+    expires: 2027-03-31
+```
 
 ## Inline scripts
 

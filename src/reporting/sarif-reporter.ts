@@ -40,6 +40,7 @@ const KIND_DESCRIPTIONS: Record<string, string> = {
   'iframe-origin-removed': 'An approved iframe origin is no longer embedded.',
   'policy-accepted-update': 'A script covered by a script policy changed; the policy accepts new versions (new behaviour is still reported).',
   'pinned-hash-mismatch': 'A pinned script does not match any of its allowed hashes.',
+  'vulnerable-library': 'A JavaScript library with known vulnerabilities (CVE) is loaded.',
 };
 
 export interface SarifOptions {

@@ -109,6 +109,8 @@ services:
       - reports:/work/.thirdsentry/reports
       - state:/work/.thirdsentry/state
       - cache:/work/.thirdsentry/cache
+      # Vulnerability database written by vulndb-updater; the analyzer only reads it.
+      - vulndb:/work/.thirdsentry/cache/vulndb:ro
     mem_limit: 1g
     pids_limit: 128
 
@@ -150,6 +152,22 @@ services:
     mem_limit: 128m
     pids_limit: 64
     restart: unless-stopped
+  # Downloads the library vulnerability database (retire.js). Short-lived:
+  #   docker compose run --rm vulndb-updater
+  # The only thing it can write is the vulndb volume. It has internet egress (like the
+  # alerter) but no alert credentials, no baselines, no reports, no state and no scan
+  # evidence, and it uses the SSRF-safe client. Not part of the scan pipeline; the analyzer
+  # (network_mode: none) and tools mount the volume read-only. See docs/libraries.md.
+  vulndb-updater:
+    <<: *slim
+    profiles: [vulndb]
+    command: ["--config", "/work/thirdsentry.yml", "vulndb", "update"]
+    volumes:
+      - *config-volume
+      - vulndb:/work/.thirdsentry/cache/vulndb
+    networks: [egress]
+    mem_limit: 256m
+    pids_limit: 64
 
   # Maintenance commands (baseline, diff, report, cleanup). No network.
   # Example: docker compose run --rm tools baseline
@@ -163,6 +181,7 @@ services:
       - reports:/work/.thirdsentry/reports
       - state:/work/.thirdsentry/state
       - cache:/work/.thirdsentry/cache
+      - vulndb:/work/.thirdsentry/cache/vulndb:ro
     entrypoint: ["node", "/opt/thirdsentry/dist/cli/bin.js", "--config", "/work/thirdsentry.yml"]
 
 volumes:
@@ -171,6 +190,7 @@ volumes:
   reports:
   state:
   cache:
+  vulndb:
 
 networks:
   # Only for the optional metrics exporter: a published port works, but nothing can leave.

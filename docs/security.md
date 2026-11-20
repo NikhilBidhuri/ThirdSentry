@@ -120,6 +120,10 @@ Alert credentials are read from environment variables (`${VAR}` interpolation is
 
 The HTML report embeds strings that originate from scanned pages (URLs, hostnames, error text). All of them are HTML-escaped, the report loads no external resources and carries a `Content-Security-Policy` that forbids scripts. Slack and GitHub messages escape their respective markup, so hostile URLs cannot trigger mentions or formatting tricks.
 
+## Vulnerability database
+
+The library vulnerability database ([libraries.md](libraries.md)) is the only data ThirdSentry downloads, and it is untrusted input. Only `thirdsentry vulndb update` touches the network (SSRF-safe client, size cap, strict schema validation, atomic write); the analyzer never fetches anything and reads the cached file with the same validation, ignoring it (and using the bundled seed) if it is invalid or does not match its recorded SHA-256. Regexes from the file are screened against catastrophic backtracking and run on size-capped input. In Docker the update runs in a dedicated egress-only service with write access to one volume that the analyzer mounts read-only.
+
 ## Residual risks
 
 - **Browser 0-days**: a full browser plus sandbox escape compromises the worker. In process mode that means the local user account; in container mode, the container. Keep Playwright up to date.

@@ -13,6 +13,7 @@ import { registerCspLint } from './commands/csp-lint.js';
 import { registerCleanup } from './commands/cleanup.js';
 import { registerMetrics } from './commands/metrics.js';
 import { registerStatus } from './commands/status.js';
+import { registerVulnDb } from './commands/vulndb.js';
 import { color } from './output.js';
 import { lockStorageFor, releaseStorageLock } from './context.js';
 
@@ -41,6 +42,7 @@ export function buildProgram(): Command {
   registerAlert(program);
   registerCspLint(program);
   registerCleanup(program);
+  registerVulnDb(program);
   registerPipeline(program);
   // Read-only (not in STORAGE_WRITING_COMMANDS): they never take the storage lock.
   registerMetrics(program);

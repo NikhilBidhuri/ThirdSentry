@@ -3,6 +3,8 @@ import type { ScriptResource } from '../types/index.js';
 import { matchesAnyGlob } from '../utils/patterns.js';
 import { analyzeJavaScript } from './ast-analyzer.js';
 import { RULES } from './indicator-rules.js';
+import { detectFromContent, detectFromUrl, mergeDetections } from './libraries/detector.js';
+import type { LibraryDb } from './libraries/vulndb.js';
 import { goalForResourceType } from './parser.js';
 import type { Rule } from './rule-types.js';
 
@@ -33,15 +35,26 @@ export function enabledRules(config: Pick<ThirdSentryConfig, 'rules'>): Rule[] {
 export function analyzeResources(
   resources: readonly ScriptResource[],
   contents: ReadonlyMap<string, Buffer>,
-  config: Pick<ThirdSentryConfig, 'rules' | 'analysis'>,
+  config: Pick<ThirdSentryConfig, 'rules' | 'analysis'> & { libraries?: ThirdSentryConfig['libraries'] },
+  libraryDb?: LibraryDb,
 ): void {
   if (!config.analysis.enabled) return;
   const rules = enabledRules(config);
   const cache = new Map<string, ReturnType<typeof analyzeJavaScript>>();
+  const libraryCache = new Map<string, ReturnType<typeof detectFromContent>>();
   for (const resource of resources) {
     if (!ANALYZABLE.has(resource.type) || resource.discovery.includes('importmap')) continue;
     const sha = resource.hashes.sha256;
     const body = sha ? contents.get(sha) : undefined;
+    if (config.libraries?.detect) {
+      let fromContent = sha ? libraryCache.get(sha) : undefined;
+      if (!fromContent) {
+        fromContent = detectFromContent(body, libraryDb, config.libraries.knownHashes);
+        if (sha) libraryCache.set(sha, fromContent);
+      }
+      const found = mergeDetections([...fromContent, ...detectFromUrl(resource.finalUrl ?? resource.originalUrl, libraryDb)]);
+      if (found.length > 0) resource.libraries = found;
+    }
     if (!sha || !body) {
       resource.indicators = { analyzed: false, error: `content ${resource.content.status}`, counts: {}, matches: [], hosts: [] };
       continue;

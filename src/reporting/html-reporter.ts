@@ -96,6 +96,22 @@ function renderResources(site: SiteResult): string {
   return `<table><thead><tr><th>Type</th><th>Party</th><th>Resource</th><th>SHA-256</th><th>Pages</th><th>Behaviour indicators</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+function renderLibraries(report: AnalysisReport): string {
+  const libs = report.libraries;
+  if (!libs) return '';
+  const d = libs.db;
+  const dbLine = `Vulnerability database: ${d.source === 'cache' ? `cached download${d.fetchedAt ? `, fetched ${d.fetchedAt}` : ''}${d.ageDays !== undefined ? ` (${d.ageDays} days old)` : ''}` : 'bundled seed (small; run "thirdsentry vulndb update")'} · ${d.advisories} advisories`;
+  const warnings = d.warnings.map((w) => `<p class="warn">${e(w)}</p>`).join('');
+  if (libs.inventory.length === 0) return `<h2>Libraries</h2><div class="card"><p class="muted">No known JavaScript libraries were recognised.</p><p class="muted">${e(dbLine)}</p>${warnings}</div>`;
+  const rows = libs.inventory
+    .map(
+      (l) =>
+        `<tr><td>${e(l.site)}</td><td>${e(l.name)}</td><td class="mono">${e(l.version)}</td><td>${e(l.method)} (${e(l.confidence)})</td><td>${l.advisories.length ? `<span class="bad">${e(l.advisories.join(', '))}</span>` : '<span class="ok">none known</span>'}</td><td class="mono">${e(l.resources.slice(0, 3).join(', '))}</td></tr>`,
+    )
+    .join('');
+  return `<h2>Libraries (${libs.inventory.length})</h2><div class="card"><table><thead><tr><th>Site</th><th>Library</th><th>Version</th><th>Detected by</th><th>Known vulnerabilities</th><th>Resources</th></tr></thead><tbody>${rows}</tbody></table><p class="muted">${e(dbLine)}. Versions come from banners, code and URLs and can be wrong or missing for minified bundles.</p>${warnings}</div>`;
+}
+
 function renderDestinations(site: SiteResult): string {
   if (site.destinations.length === 0) return '<p class="muted">No outbound requests recorded.</p>';
   const rows = site.destinations
@@ -157,6 +173,8 @@ ${renderPolicies(report)}
 <h2>Findings (${active.length})</h2>
 ${active.length === 0 ? '<p class="muted">No active findings.</p>' : active.map(renderFinding).join('\n')}
 ${suppressed.length ? `<h2>Suppressed findings (${suppressed.length})</h2>${suppressed.map(renderFinding).join('\n')}` : ''}
+
+${renderLibraries(report)}
 
 ${failures.length ? `<h2>Scan problems</h2><div class="card"><table><thead><tr><th>Where</th><th>Level</th><th>Code</th><th>Message</th></tr></thead><tbody>${failures.map((i) => `<tr><td>${e(i.where)}</td><td>${e(i.level)}</td><td class="mono">${e(i.code)}</td><td>${e(i.message)}</td></tr>`).join('')}</tbody></table></div>` : ''}
 

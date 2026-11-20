@@ -1,3 +1,4 @@
+import { libraryDisplayName } from '../analysis/libraries/describe.js';
 import { explainScore } from '../analysis/risk-scoring.js';
 import type { Finding } from '../types/findings.js';
 import type { AnalysisReport } from '../types/report.js';
@@ -18,6 +19,21 @@ export function printFinding(f: Finding, verbose: boolean): void {
   print(`    ${color.cyan('next:')} ${f.recommendedAction.replace('<finding-id>', f.id)}`);
 }
 
+/** Recognised libraries and vulnerability database status. */
+export function printLibraries(report: AnalysisReport): void {
+  const libs = report.libraries;
+  if (!libs || (libs.inventory.length === 0 && !libs.db.stale)) return;
+  print();
+  print(color.bold(`Libraries (${libs.inventory.length})`));
+  for (const l of libs.inventory) {
+    const vuln = l.advisories.length > 0 ? color.red(` ${l.advisories.length} known vulnerabilit${l.advisories.length === 1 ? 'y' : 'ies'} (${l.advisories.slice(0, 3).join(', ')}${l.advisories.length > 3 ? ', ...' : ''})`) : '';
+    print(`  ${l.site}: ${libraryDisplayName(l.name)} ${l.version} ${color.gray(`(${l.method}, ${l.confidence} confidence)`)}${vuln}`);
+  }
+  const d = libs.db;
+  print(color.gray(`  vulnerability database: ${d.source === 'cache' ? `cached${d.fetchedAt ? `, fetched ${d.fetchedAt}` : ''}${d.ageDays !== undefined ? ` (${d.ageDays} days old)` : ''}` : 'bundled seed'}, ${d.advisories} advisories`));
+  for (const w of d.warnings) print(color.yellow(`  warning: ${w}`));
+}
+
 export function printReport(report: AnalysisReport, verbose: boolean): void {
   print();
   print(color.bold('Summary: ') + report.headline);
@@ -32,6 +48,7 @@ export function printReport(report: AnalysisReport, verbose: boolean): void {
     );
     if (site.pagesNotCompared.length) print(color.yellow(`    removals not evaluated for incomplete pages: ${site.pagesNotCompared.join(', ')}`));
   }
+  printLibraries(report);
   if (report.findings.length === 0) return;
   print();
   print(color.bold(`Findings (${report.findings.length})`));

@@ -215,6 +215,24 @@ export const AnalysisSchema = z
   })
   .strict();
 
+export const LibrariesSchema = z
+  .object({
+    /** Recognise known JavaScript libraries and versions (offline, from banners, code and URLs). */
+    detect: z.boolean().default(true),
+    /** Raise findings for known vulnerabilities (CVE) in detected libraries. Needs detect. */
+    vulnerabilities: z.boolean().default(true),
+    /** Only advisories at or above this severity are reported. */
+    minSeverity: z.enum(['low', 'medium', 'high', 'critical']).default('low'),
+    /** Warn when the cached vulnerability database is older than this many days. */
+    maxDbAgeDays: z.number().int().min(1).max(3650).default(30),
+    /** Exact content hashes of files you know (SHA-256), mapped to a library and version. */
+    knownHashes: z
+      .array(z.object({ sha256: z.string().regex(/^[0-9a-fA-F]{64}$/), name: z.string().min(1).max(100), version: z.string().min(1).max(40) }).strict())
+      .max(1000)
+      .default([]),
+  })
+  .strict();
+
 export const DomainPolicySchema = z
   .object({
     /** Domains/hosts treated as approved everywhere (never reported as new). */
@@ -412,6 +430,7 @@ export const ConfigSchema = z
     retention: RetentionSchema.prefault({}),
     risk: RiskSchema.prefault({}),
     analysis: AnalysisSchema.prefault({}),
+    libraries: LibrariesSchema.prefault({}),
     rules: z.record(z.string().regex(/^TS-[A-Z0-9-]+$/, 'rule ids look like TS-EVAL'), RuleConfigSchema).default({}),
     domains: DomainPolicySchema.prefault({}),
     suppressions: z.array(SuppressionSchema).default([]),

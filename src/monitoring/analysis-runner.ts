@@ -1,6 +1,7 @@
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { loadBaseline } from '../baseline/baseline-manager.js';
 import type { ResolvedConfig } from '../config/loader.js';
+import { loadLibraryDb } from '../analysis/libraries/vulndb.js';
 import { writeReports, type ReportFormat, type WrittenReports } from '../reporting/index.js';
 import { ensureScanReportDir } from '../storage/filesystem-store.js';
 import { assertSiteName, baselinePath } from '../storage/paths.js';
@@ -18,6 +19,7 @@ import { compareSiteWithPolicies, usageWithoutBaseline, type PolicySiteUsage } f
 import { isSilentPolicyFinding } from '../policies/finding-hooks.js';
 import { buildPolicyReport } from '../policies/report.js';
 import { buildFindings } from './finding-engine.js';
+import { buildLibraryFindings, buildLibraryReport } from './library-findings.js';
 import { applySuppressions } from './suppressions.js';
 import { annotateFindings, loadFindingState, saveFindingState, trackFindings } from './dedup-state.js';
 import { getLogger } from '../utils/logger.js';
@@ -101,7 +103,13 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
   const sites: SiteComparisonSummary[] = [];
   const policyUsage: PolicySiteUsage[] = [];
 
+  const libraryConfig = resolved.config.libraries;
+  const libraryDb = libraryConfig.detect ? await loadLibraryDb(resolved.paths.cache, { now, maxAgeDays: libraryConfig.maxDbAgeDays }) : undefined;
+  for (const w of libraryDb?.info.warnings ?? []) if (libraryDb?.info.source === 'cache' || libraryDb?.info.stale) getLogger('analysis').warn(w);
+
   for (const site of scan.sites) {
+    const libraryFindings = libraryDb ? buildLibraryFindings(site, { db: libraryDb, libraries: libraryConfig, risk: resolved.config.risk, now }) : [];
+    findings.push(...libraryFindings);
     const baseline = await loadBaseline(resolved.paths, site.name);
     const path = relative(resolved.baseDir, baselinePath(resolved.paths, site.name)) || baselinePath(resolved.paths, site.name);
     if (!baseline) {
@@ -117,7 +125,7 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
         removedResources: 0,
         newDomains: [],
         pagesNotCompared: site.pages.map((p) => p.key),
-        findings: 0,
+        findings: libraryFindings.length,
       });
       continue;
     }
@@ -152,7 +160,7 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
       removedResources: kinds.filter((k) => k === 'resource-removed').length,
       newDomains: [...new Set(comparison.changes.filter((c) => c.kind === 'new-script-domain' || c.kind === 'new-outbound-domain').map((c) => c.domain ?? ''))].filter(Boolean).sort(),
       pagesNotCompared: comparison.pagesNotCompared,
-      findings: siteFindings.length,
+      findings: siteFindings.length + libraryFindings.length,
     });
   }
 
@@ -189,6 +197,7 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
   for (const e of policies?.expired ?? []) {
     getLogger('analysis').warn({ policy: e.name, expires: e.expires }, `script policy "${e.name}" expired and no longer applies: its scripts are compared normally again`);
   }
+  const libraryReport = buildLibraryReport(scan.sites, libraryDb, libraryConfig);
   const base: Omit<AnalysisReport, 'headline'> = {
     schemaVersion: 1,
     kind: 'thirdsentry-report',
@@ -208,6 +217,7 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
     coverageLimitations: scan.coverageLimitations,
     ...(health ? { health } : {}),
     ...(policies ? { policies } : {}),
+    ...(libraryReport ? { libraries: libraryReport } : {}),
   };
   const recoveryNotes = (health?.recoveries ?? []).map((r) => `Recovered: scanning of ${r.site} works again after ${r.failures} failed scans (since ${r.since}).`);
   return { report: { ...base, headline: [headline(base), ...recoveryNotes].filter(Boolean).join(' ') }, comparisons };
