@@ -41,6 +41,8 @@ export interface ResourceHashes {
   readonly sha256: string | null;
   /** Subresource-Integrity form of the raw hash (sha256-<base64>). */
   readonly sri: string | null;
+  /** Subresource-Integrity form of the raw SHA-384 (sha384-<base64>); used to verify pinned SRI hashes. */
+  readonly sri384?: string | null;
   /** SHA-256 (hex) of the normalised JavaScript, when parsing succeeded. */
   readonly normalizedSha256: string | null;
   /** Version of the normaliser that produced normalizedSha256. */

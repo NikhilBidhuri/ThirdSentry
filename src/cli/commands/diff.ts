@@ -3,6 +3,8 @@ import type { Command } from 'commander';
 import { loadConfig } from '../../config/loader.js';
 import { analyzeScan, exceedsThreshold } from '../../monitoring/analysis-runner.js';
 import { loadBaseline } from '../../baseline/baseline-manager.js';
+import { applyPoliciesToBaseline } from '../../policies/apply.js';
+import { formatPolicyReport } from '../../policies/report.js';
 import { diffScripts } from '../../analysis/structural-diff.js';
 import { ContentStore, loadLatestScan, loadScanResult, scriptContentMode } from '../../storage/filesystem-store.js';
 import type { AnalysisReport } from '../../types/report.js';
@@ -36,12 +38,13 @@ export async function codeDiffsFor(resolved: ResolvedConfig, findings: readonly 
   const store = new ContentStore(resolved.paths.content);
   const out: CodeDiffResult[] = [];
   for (const f of findings) {
-    if (f.kind !== 'resource-modified' && f.kind !== 'resource-formatting-changed') continue;
+    if (f.kind !== 'resource-modified' && f.kind !== 'resource-formatting-changed' && f.kind !== 'policy-accepted-update') continue;
     if (!f.currentHash) {
       out.push({ findingId: f.id, available: false, message: 'Current content was not captured.' });
       continue;
     }
-    const baseline = await loadBaseline(resolved.paths, f.site);
+    const stored = await loadBaseline(resolved.paths, f.site);
+    const baseline = stored ? applyPoliciesToBaseline(stored, resolved.config, new Date()) : undefined;
     const resource = baseline?.resources.find((r) => r.identity === f.resourceIdentity);
     const previous = resource?.approvedHashes.map((h) => h.sha256).filter((h): h is string => h !== null).reverse() ?? [];
     const current = await store.get(f.currentHash);
@@ -109,6 +112,10 @@ export function registerDiff(program: Command): void {
       } else {
         print(color.bold(`Scan ${scan.scanId}`) + color.gray(` (${scan.startedAt}, ${opts.scan ? scanPath : 'latest scan'})`));
         printReport(shown, g.verbose === true);
+        if (report.policies) {
+          print();
+          for (const l of formatPolicyReport(report.policies)) print(l);
+        }
         for (const d of diffs) {
           print();
           print(color.bold(`Code diff for ${d.findingId}`) + (d.mode ? color.gray(` (${d.mode})`) : ''));

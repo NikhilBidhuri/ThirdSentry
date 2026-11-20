@@ -1,4 +1,5 @@
 import type { Finding, Severity } from './findings.js';
+import type { PolicyReport } from '../policies/types.js';
 import type { Issue, PageStatus, ScanSummary } from './index.js';
 
 export interface SiteComparisonSummary {
@@ -39,6 +40,8 @@ export interface AnalysisReport {
   readonly findingCounts: Readonly<Record<Severity, number>>;
   readonly highestSeverity: Severity | 'none';
   readonly coverageLimitations: readonly string[];
+  /** Script policies (scriptPolicies): active, unused and expired, and which policy governs which script. Absent when none are configured. */
+  readonly policies?: PolicyReport;
   /** Plain-language summary for non-specialists. */
   readonly headline: string;
 }

@@ -14,7 +14,8 @@ import {
 import type { Baseline } from '../../baseline/baseline-schema.js';
 import { loadConfig } from '../../config/loader.js';
 import { assertScanSitesConfigured } from '../../monitoring/analysis-runner.js';
-import { compareSite, type Change } from '../../monitoring/comparison-engine.js';
+import type { Change } from '../../monitoring/comparison-engine.js';
+import { applyPoliciesToSite, compareSiteWithPolicies } from '../../policies/apply.js';
 import { buildFindings } from '../../monitoring/finding-engine.js';
 import { loadLatestScan, loadScanResult } from '../../storage/filesystem-store.js';
 import type { Finding } from '../../types/findings.js';
@@ -61,6 +62,7 @@ export function approvalItemsFor(change: Change): ApprovalItem[] {
   switch (change.kind) {
     case 'resource-modified':
     case 'resource-formatting-changed':
+    case 'policy-accepted-update':
     case 'resource-added':
     case 'resource-type-changed':
     case 'redirect-changed':
@@ -170,12 +172,20 @@ export function registerBaseline(program: Command): void {
         };
         let findings: Finding[] = [];
         let changes: readonly Change[] = [];
+        // Script policies re-key governed scripts to their policy identity before anything is approved,
+        // so the baseline approves the policy identity and finding IDs match `thirdsentry diff`.
+        let effSite = site;
+        let effPrevious = previous;
         if (previous) {
-          changes = compareSite(site, previous, resolved.config.domains).changes;
-          findings = buildFindings(changes, { site, risk: resolved.config.risk, rules: resolved.config.rules, domains: resolved.config.domains });
+          const applied = compareSiteWithPolicies(site, previous, resolved.config, { domains: resolved.config.domains });
+          effSite = applied.site;
+          effPrevious = applied.baseline;
+          changes = applied.comparison.changes;
+          findings = buildFindings(changes, { site: effSite, risk: resolved.config.risk, rules: resolved.config.rules, domains: resolved.config.domains });
         }
+        if (!previous) effSite = applyPoliciesToSite(site, resolved.config, new Date());
         if (requested.size > 0) {
-          if (!previous) continue;
+          if (!effPrevious) continue;
           const items: ApprovalItem[] = [];
           const approved: Finding[] = [];
           findings.forEach((f, i) => {
@@ -190,8 +200,8 @@ export function registerBaseline(program: Command): void {
             items.push(...forFinding);
           });
           if (items.length === 0) continue;
-          const next = approveSelected(previous, site, items, common);
-          plans.push({ site, previous, next, summary: summarizeBaselineChange(previous, next), approvedFindings: approved });
+          const next = approveSelected(effPrevious, effSite, items, common);
+          plans.push({ site: effSite, previous, next, summary: summarizeBaselineChange(previous, next), approvedFindings: approved });
           continue;
         }
         const completeCount = site.pages.filter((p) => p.status === 'complete').length;
@@ -204,10 +214,10 @@ export function registerBaseline(program: Command): void {
             'Re-scan, or pass --allow-partial to approve only the completely scanned pages.',
           );
         }
-        const next = previous
-          ? approveFullScan(previous, site, { ...common, includePartial: false })
-          : createBaseline(site, { ...common, includePartial: false });
-        plans.push({ site, previous, next, summary: summarizeBaselineChange(previous, next), approvedFindings: findings });
+        const next = effPrevious
+          ? approveFullScan(effPrevious, effSite, { ...common, includePartial: false })
+          : createBaseline(effSite, { ...common, includePartial: false });
+        plans.push({ site: effSite, previous, next, summary: summarizeBaselineChange(previous, next), approvedFindings: findings });
       }
 
       const unmatched = [...requested].filter((id) => !matchedIds.has(id));
@@ -220,7 +230,9 @@ export function registerBaseline(program: Command): void {
         // would look like an approval.
         throw new BaselineError(
           `These findings cannot be approved into a baseline: ${notApprovable.map((f) => `${f.id} (${f.kind})`).join(', ')}`,
-          'They clear when the page is scanned completely again. To silence a known outage, add a time-limited suppression in thirdsentry.yml.',
+          notApprovable.some((f) => f.kind === 'pinned-hash-mismatch')
+            ? 'A pinned-hash-mismatch is decided by the script policy, not the baseline: after reviewing the new version, add its hash to the policy\'s hashes in thirdsentry.yml.'
+            : 'They clear when the page is scanned completely again. To silence a known outage, add a time-limited suppression in thirdsentry.yml.',
         );
       }
       if (plans.length === 0) {

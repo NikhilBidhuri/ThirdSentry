@@ -258,6 +258,8 @@ HIGH confidence high  Third-party script changed on a sensitive page  TS-3f1c0a9
 | `denylisted-domain` | 80 | The domain is on the configured denylist (behavioural) |
 | `suspicious-domain` | 30 | The domain matches a configured reputation warning (domains.suspicious) (behavioural) |
 | `ip-address-destination` | 15 | The destination is a raw IP address rather than a domain name (behavioural) |
+| `pinned-hash-mismatch` | 55 | A pinned script does not match any allowed hash, whatever the baseline says (behavioural) |
+| `policy-accepted-update` | 0 | The content changed, which a script policy explicitly accepts |
 | `script-references-new-destination` | 25 | The changed script itself references the new outbound destination (behavioural) |
 
 Rule matches add signals named `new-rule:<rule id>` (or `rule:<rule id>` at half weight when the previous version was not analysed). Rules with a weight of 10 or more count as behavioural and move a finding into the `suspicious` category.
@@ -306,6 +308,7 @@ suppressions:
 - A suppression with `rule` removes only that rule's signal from matching findings and re-scores them, so it cannot hide unrelated problems in the same change.
 - Any other suppression (`id`, `kind`, `site`, `resource`, `domain`) marks the whole finding as **suppressed**. Suppressed findings stay in reports (marked as such) but do not trigger alerts or fail builds.
 - Expired suppressions stop applying and produce a warning.
+- A suppression may name a script policy (`policy: <name>`) to match every finding that policy affected. For vendors whose scripts rotate, prefer a [script policy](policies.md), which never hides new suspicious behaviour.
 
 ## Coverage findings
 

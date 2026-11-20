@@ -74,6 +74,16 @@ ${f.resourceUrl ? `<p class="mono">${e(f.resourceUrl)}</p>` : ''}
 </article>`;
 }
 
+function renderPolicies(report: AnalysisReport): string {
+  const p = report.policies;
+  if (!p) return '';
+  const rows = [...p.active, ...p.unused, ...p.expired]
+    .map((x) => `<tr><td class="mono">${e(x.name)}</td><td>${e(x.mode)}</td><td>${e(x.scope)}</td><td>${e(x.status)}</td><td>${x.matchedResources}</td><td>${x.acceptedUpdates}</td><td>${x.findings}</td><td>${e(x.owner ?? '')}</td><td>${e(x.expires ?? '')}</td><td>${e(x.reason)}</td></tr>`)
+    .join('');
+  const matches = p.matches.map((m) => `<tr><td class="mono">${e(m.resource)}</td><td>${e(m.policy)} (${e(m.mode)})</td><td class="mono">${e(m.identity)}</td></tr>`).join('');
+  return `<h2>Script policies</h2><div class="card"><table><thead><tr><th>Policy</th><th>Mode</th><th>Scope</th><th>Status</th><th>Scripts</th><th>Accepted updates</th><th>Findings</th><th>Owner</th><th>Expires</th><th>Reason</th></tr></thead><tbody>${rows}</tbody></table>${matches ? `<h3>Policy matches</h3><table><thead><tr><th>Script</th><th>Policy</th><th>Tracked as</th></tr></thead><tbody>${matches}</tbody></table>` : ''}</div>`
+}
+
 function renderResources(site: SiteResult): string {
   if (site.resources.length === 0) return '<p class="muted">No script resources observed.</p>';
   const rows = site.resources
@@ -143,6 +153,7 @@ export function renderHtmlReport(report: AnalysisReport, scan?: ScanResult): str
 <h2>Sites</h2>
 <div class="card"><table><thead><tr><th>Site</th><th>URL</th><th>Scan</th><th>Baseline</th><th>Unchanged</th><th>New</th><th>Modified</th><th>Removed</th><th>New domains</th></tr></thead><tbody>${siteRows}</tbody></table></div>
 
+${renderPolicies(report)}
 <h2>Findings (${active.length})</h2>
 ${active.length === 0 ? '<p class="muted">No active findings.</p>' : active.map(renderFinding).join('\n')}
 ${suppressed.length ? `<h2>Suppressed findings (${suppressed.length})</h2>${suppressed.map(renderFinding).join('\n')}` : ''}

@@ -11,7 +11,10 @@ import { ConfigError } from '../utils/errors.js';
 import { ExitCode, type ExitCodeValue } from '../utils/exit-codes.js';
 import { copyFileAtomic, writeJsonAtomic } from '../utils/fs.js';
 import { toolVersion } from '../utils/version.js';
-import { compareSite, type ComparisonResult } from './comparison-engine.js';
+import type { ComparisonResult } from './comparison-engine.js';
+import { compareSiteWithPolicies, usageWithoutBaseline, type PolicySiteUsage } from '../policies/apply.js';
+import { isSilentPolicyFinding } from '../policies/finding-hooks.js';
+import { buildPolicyReport } from '../policies/report.js';
 import { buildFindings } from './finding-engine.js';
 import { applySuppressions } from './suppressions.js';
 import { annotateFindings, loadFindingState, saveFindingState, trackFindings } from './dedup-state.js';
@@ -94,11 +97,13 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
   const comparisons = new Map<string, ComparisonResult>();
   const findings: Finding[] = [];
   const sites: SiteComparisonSummary[] = [];
+  const policyUsage: PolicySiteUsage[] = [];
 
   for (const site of scan.sites) {
     const baseline = await loadBaseline(resolved.paths, site.name);
     const path = relative(resolved.baseDir, baselinePath(resolved.paths, site.name)) || baselinePath(resolved.paths, site.name);
     if (!baseline) {
+      policyUsage.push(usageWithoutBaseline(site, resolved.config, now));
       sites.push({
         name: site.name,
         url: site.url,
@@ -114,15 +119,17 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
       });
       continue;
     }
-    const comparison = compareSite(site, baseline, resolved.config.domains);
+    const applied = compareSiteWithPolicies(site, baseline, resolved.config, { domains: resolved.config.domains, now });
+    const comparison = applied.comparison;
+    policyUsage.push(applied.usage);
     comparisons.set(site.name, comparison);
     const siteFindings = buildFindings(comparison.changes, {
-      site,
+      site: applied.site,
       risk: resolved.config.risk,
       rules: resolved.config.rules,
       domains: resolved.config.domains,
       now,
-    });
+    }).filter((f) => !isSilentPolicyFinding(f));
     findings.push(...siteFindings);
     const kinds = comparison.changes.map((c) => c.kind);
     const lastApproval = baseline.approvals.at(-1);
@@ -139,7 +146,7 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
       },
       unchangedResources: comparison.unchanged,
       newResources: kinds.filter((k) => k === 'resource-added').length,
-      modifiedResources: kinds.filter((k) => k === 'resource-modified' || k === 'resource-formatting-changed').length,
+      modifiedResources: kinds.filter((k) => k === 'resource-modified' || k === 'resource-formatting-changed' || k === 'policy-accepted-update').length,
       removedResources: kinds.filter((k) => k === 'resource-removed').length,
       newDomains: [...new Set(comparison.changes.filter((c) => c.kind === 'new-script-domain' || c.kind === 'new-outbound-domain').map((c) => c.domain ?? ''))].filter(Boolean).sort(),
       pagesNotCompared: comparison.pagesNotCompared,
@@ -159,6 +166,10 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
     annotateFindings(suppression.findings, state);
   }
   const sorted = sortFindings(suppression.findings);
+  const policies = buildPolicyReport(resolved.config, policyUsage, sorted, now);
+  for (const e of policies?.expired ?? []) {
+    getLogger('analysis').warn({ policy: e.name, expires: e.expires }, `script policy "${e.name}" expired and no longer applies: its scripts are compared normally again`);
+  }
   const base: Omit<AnalysisReport, 'headline'> = {
     schemaVersion: 1,
     kind: 'thirdsentry-report',
@@ -176,6 +187,7 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
     findingCounts: countBy(sorted),
     highestSeverity: highestSeverity(sorted),
     coverageLimitations: scan.coverageLimitations,
+    ...(policies ? { policies } : {}),
   };
   return { report: { ...base, headline: headline(base) }, comparisons };
 }
