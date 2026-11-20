@@ -1,0 +1,28 @@
+# Example Prometheus alerting rules for ThirdSentry (docs/monitoring.md).
+groups:
+  - name: thirdsentry
+    rules:
+      - alert: ThirdSentryScanStale
+        # No complete scan for 12 hours (the schedule is every 6 hours).
+        expr: time() - thirdsentry_last_complete_scan_timestamp_seconds > 12 * 3600
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "No complete ThirdSentry scan of {{ $labels.site }} for 12 hours"
+      - alert: ThirdSentryScansFailing
+        expr: thirdsentry_consecutive_failed_scans >= 3
+        labels: { severity: critical }
+        annotations:
+          summary: "ThirdSentry cannot scan {{ $labels.site }} ({{ $value }} failures in a row)"
+      - alert: ThirdSentryHighFindings
+        expr: thirdsentry_findings{severity=~"high|critical", suppressed="false"} > 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Open {{ $labels.severity }} ThirdSentry finding(s) on {{ $labels.site }}"
+      - alert: ThirdSentryAlertDeliveryFailing
+        expr: thirdsentry_alert_delivery_failures > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "ThirdSentry cannot deliver alerts through {{ $labels.channel }}"

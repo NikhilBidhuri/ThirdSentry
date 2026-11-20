@@ -209,6 +209,20 @@ A list of documented suppressions. Each entry needs a `reason` and at least one 
 | --- | --- | --- |
 | `formats` | `[json, sarif, html]` | Report formats written after each scan. |
 
+## `health`
+
+Scan health, the `scan-unhealthy` finding and the heartbeat. See [monitoring.md](monitoring.md).
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `failureThreshold` | `3` | Consecutive failed (or incomplete) scans of a site before a `scan-unhealthy` finding (severity `high`; `critical` at three times the threshold) is raised. 1-1000. |
+| `countIncomplete` | `true` | Count `partial` scans as failures. With `false` only scans with status `failed` count. |
+| `heartbeat.url` | `${THIRDSENTRY_HEARTBEAT_URL}` | Ping URL of a push monitor (healthchecks.io, Cronitor, Uptime Kuma). Setting `heartbeat` enables it; leave `heartbeat` out for none. Use an `${ENV}` reference: the URL is a secret. |
+| `heartbeat.failUrl` | none | URL for failure pings. Default: `url` plus `failPath`. |
+| `heartbeat.failPath` | `/fail` | Appended to the path of `url` for failure pings when `failUrl` is not set. `""` sends no failure ping. |
+| `heartbeat.onIncomplete` | `fail` | What a `partial` run sends: `fail`, `success` or `skip`. |
+| `heartbeat.timeoutMs` | `5000` | Timeout of the single attempt (500-30000). There are no retries. |
+
 ## `alerts`
 
 See [alerts.md](alerts.md) for every option and the environment variables they use. Credentials must be `${ENV_VAR}` references; they are resolved only when alerts are sent.

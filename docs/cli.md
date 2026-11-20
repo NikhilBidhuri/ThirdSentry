@@ -114,8 +114,35 @@ Send alerts for new findings in `report.json`. See [alerts.md](alerts.md).
 | `--report <file>` | Report to alert on. |
 | `--channel <names>` | Only these channels: `slack`, `webhook`, `github`, `email`. |
 | `--dry-run` | Show what would be sent. |
+| `--no-heartbeat` | Do not send the `health.heartbeat` ping. |
 
 Exit code `4` if any channel failed.
+
+Besides alerting, `alert` records per-channel delivery health in `state/health.json` and, when `health.heartbeat` is configured, sends the heartbeat ping (success after a complete run, failure otherwise; see [monitoring.md](monitoring.md)). `--no-heartbeat` skips the ping. `--test` and `--dry-run` never ping. `scan` has the same `--no-heartbeat` flag and pings when alerts are enabled.
+
+## `thirdsentry metrics`
+
+Render Prometheus metrics from the latest report, scan health and alert state. Read-only; takes no storage lock. See [monitoring.md](monitoring.md) for the metric list.
+
+| Option | Description |
+| --- | --- |
+| *(none)* | Print the metrics to stdout. |
+| `--textfile <path>` | Write the metrics atomically to a file (node_exporter textfile collector; name it `*.prom`). |
+| `--serve <[host:]port>` | Serve `GET /metrics` and `GET /healthz` over HTTP until stopped. Read-only, **no authentication**, binds to `127.0.0.1` by default. |
+| `--push <url>` | `PUT` the metrics to a Pushgateway (`<url>/metrics/job/thirdsentry`). |
+
+`--textfile` and `--push` can be combined. Exit `4` if a push fails.
+
+## `thirdsentry status`
+
+Summarise scan health, open findings by severity, baseline presence and alert channel health per site. Read-only; takes no storage lock. Use `--json` for machine-readable output.
+
+| Option | Description |
+| --- | --- |
+| `-s, --site <names>` | Only these sites. |
+| `--max-age <hours>` | Treat a site whose last scan finished longer ago than this as unhealthy. |
+
+Exit codes: `0` healthy (or only degraded), `1` a site or alert channel is unhealthy, `2` usage or configuration error, `3` no scan recorded yet.
 
 ## `thirdsentry csp-lint`
 

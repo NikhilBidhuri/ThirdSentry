@@ -21,6 +21,27 @@ export interface SiteComparisonSummary {
   readonly findings: number;
 }
 
+export interface SiteHealthSummary {
+  readonly name: string;
+  readonly consecutiveFailures: number;
+  readonly streakStart?: string;
+  readonly lastCompleteAt?: string;
+}
+
+export interface HealthRecovery {
+  readonly site: string;
+  readonly failures: number;
+  readonly since: string;
+  readonly recoveredAt: string;
+}
+
+/** Scan health at the time of the report (see docs/monitoring.md). */
+export interface ReportHealth {
+  readonly sites: readonly SiteHealthSummary[];
+  /** Sites that scanned completely again with this scan after an unhealthy streak. */
+  readonly recoveries: readonly HealthRecovery[];
+}
+
 /** The analysis report: scan facts + comparison with baselines + findings. */
 export interface AnalysisReport {
   readonly schemaVersion: 1;
@@ -39,6 +60,7 @@ export interface AnalysisReport {
   readonly findingCounts: Readonly<Record<Severity, number>>;
   readonly highestSeverity: Severity | 'none';
   readonly coverageLimitations: readonly string[];
+  readonly health?: ReportHealth;
   /** Plain-language summary for non-specialists. */
   readonly headline: string;
 }

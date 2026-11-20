@@ -68,6 +68,7 @@ my-store https://www.example.com/ — complete (chromium 140.0.7339.16)
 | [Alerts](docs/alerts.md) | Slack, Teams, PagerDuty, webhook, GitHub Issues, email |
 | [GitHub Actions](docs/github-actions.md) | scheduled scans in CI |
 | [Docker](docs/docker.md) and [cron](docs/cron.md) | self-hosted scheduled scans |
+| [Health and monitoring](docs/monitoring.md) | failed-scan alerts, heartbeat (dead-man's switch), Prometheus metrics, `status` |
 | [CSP analysis](docs/csp.md) | `thirdsentry csp-lint` |
 | [Security model](docs/security.md) | threat model and isolation boundaries |
 | [Privacy and data retention](docs/privacy.md) | exactly what is collected and stored |
