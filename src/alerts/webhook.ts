@@ -21,14 +21,16 @@ export async function sendWebhook(
   payload: AlertPayload,
   target: { url: string; secret?: string; allowInsecureHttp: boolean },
   options: { timeoutMs: number; fetchImpl?: FetchLike; now?: Date },
-): Promise<void> {
+): Promise<readonly string[]> {
   const url = requireHttpsUrl(target.url, 'alerts.webhook.url', target.allowInsecureHttp);
   const body = JSON.stringify(payload);
-  const headers: Record<string, string> = { 'content-type': 'application/json', 'x-thirdsentry-event': 'findings' };
+  const headers: Record<string, string> = { 'content-type': 'application/json', 'x-thirdsentry-event': payload.test ? 'test' : 'findings' };
   if (target.secret) {
     const ts = Math.floor((options.now ?? new Date()).getTime() / 1000);
     headers['x-thirdsentry-timestamp'] = String(ts);
     headers['x-thirdsentry-signature'] = signPayload(body, target.secret, ts);
   }
   await sendHttp({ url: url.toString(), headers, body, timeoutMs: options.timeoutMs }, options.fetchImpl);
+  // Every finding in `payload.findings` is in the body; `omitted` ones are not and stay pending.
+  return payload.findings.map((f) => f.id);
 }

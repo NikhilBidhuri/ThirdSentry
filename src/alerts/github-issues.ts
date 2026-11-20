@@ -17,6 +17,10 @@ export interface GithubTarget {
 
 const MARKER = (id: string): string => `<!-- thirdsentry-finding: ${id} -->`;
 
+/** GitHub rejects issue bodies longer than 65,536 characters; stay well below. */
+export const GITHUB_MAX_BODY_CHARS = 60_000;
+const MAX_TITLE_CHARS = 250;
+
 function headers(token: string): Record<string, string> {
   return {
     accept: 'application/vnd.github+json',
@@ -33,6 +37,8 @@ function mdEscape(value: string): string {
 export function issueBody(f: AlertFinding, payload: AlertPayload): string {
   const lines = [
     MARKER(f.id),
+    payload.test ? '> **Test alert** sent by `thirdsentry alert --test` to verify delivery. It is not a real finding; close this issue.\n' : '',
+    payload.notice ? `> **Note:** ${mdEscape(payload.notice)}\n` : '',
     `**Severity:** ${f.severity} · **Confidence:** ${f.confidence} · **Category:** ${f.category}`,
     `**Site:** ${mdEscape(f.site)} · **Pages:** ${f.pages.map(mdEscape).join(', ') || 'n/a'}`,
     f.resourceUrl ? `**Resource:** \`${f.resourceUrl.replace(/`/g, '')}\`` : '',
@@ -54,7 +60,16 @@ export function issueBody(f: AlertFinding, payload: AlertPayload): string {
     '',
     '_ThirdSentry reports changes worth reviewing; this is not proof of compromise._',
   ];
-  return lines.filter((l, i, all) => !(l === '' && all[i - 1] === '')).join('\n');
+  const body = lines.filter((l, i, all) => !(l === '' && all[i - 1] === '')).join('\n');
+  if (body.length <= GITHUB_MAX_BODY_CHARS) return body;
+  // The marker is the first line and survives truncation, so de-duplication keeps working.
+  const note = `\n\n_…truncated to fit GitHub's issue size limit; see the report: ${mdEscape(payload.reportLocation).slice(0, 500)}_\n`;
+  return body.slice(0, GITHUB_MAX_BODY_CHARS - note.length) + note;
+}
+
+export function issueTitle(f: AlertFinding, payload: AlertPayload): string {
+  const prefix = payload.test ? 'TEST' : f.severity.toUpperCase();
+  return `[ThirdSentry] ${prefix}: ${f.title}${f.site ? ` (${f.site})` : ''}`.slice(0, MAX_TITLE_CHARS);
 }
 
 async function existingFindingIds(target: GithubTarget, api: URL, timeoutMs: number, fetchImpl?: FetchLike): Promise<Set<string>> {
@@ -81,39 +96,55 @@ async function existingFindingIds(target: GithubTarget, api: URL, timeoutMs: num
   return ids;
 }
 
-export async function createGithubIssues(
-  payload: AlertPayload,
-  target: GithubTarget,
-  options: { timeoutMs: number; fetchImpl?: FetchLike },
-): Promise<{ created: string[]; existing: string[]; skipped: string[] }> {
+export interface GithubOutcome {
+  /** Findings for which an issue was created in this run. */
+  readonly created: string[];
+  /** Findings that already have an open issue. */
+  readonly existing: string[];
+  /** Findings not handled because of maxIssuesPerRun (or an earlier failure); they are retried next run. */
+  readonly skipped: string[];
+  /** Set when creating an issue failed; issues created before the failure are still reported. */
+  readonly error?: AlertDeliveryError;
+}
+
+export async function createGithubIssues(payload: AlertPayload, target: GithubTarget, options: { timeoutMs: number; fetchImpl?: FetchLike }): Promise<GithubOutcome> {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(target.repository)) {
     throw new AlertDeliveryError('alerts.github.repository must look like "owner/repo"', undefined, false);
   }
   const api = requireHttpsUrl(target.apiUrl, 'alerts.github.apiUrl', /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(target.apiUrl));
+  // A listing failure throws: nothing is marked delivered and the whole channel is retried next run.
   const existing = await existingFindingIds(target, api, options.timeoutMs, options.fetchImpl);
   const created: string[] = [];
   const already: string[] = [];
   const skipped: string[] = [];
+  let failure: AlertDeliveryError | undefined;
   for (const f of payload.findings) {
     if (existing.has(f.id)) {
       already.push(f.id);
       continue;
     }
-    if (created.length >= target.maxIssuesPerRun) {
+    if (failure || created.length >= target.maxIssuesPerRun) {
       skipped.push(f.id);
       continue;
     }
     const url = new URL(`${api.pathname.replace(/\/$/, '')}/repos/${target.repository}/issues`, api);
-    await sendHttp(
-      {
-        url: url.toString(),
-        headers: headers(target.token),
-        body: JSON.stringify({ title: `[ThirdSentry] ${f.severity.toUpperCase()}: ${f.title} (${f.site})`.slice(0, 250), body: issueBody(f, payload), labels: target.labels }),
-        timeoutMs: options.timeoutMs,
-      },
-      options.fetchImpl,
-    );
-    created.push(f.id);
+    try {
+      await sendHttp(
+        {
+          url: url.toString(),
+          headers: headers(target.token),
+          body: JSON.stringify({ title: issueTitle(f, payload), body: issueBody(f, payload), labels: target.labels }),
+          timeoutMs: options.timeoutMs,
+        },
+        options.fetchImpl,
+      );
+      created.push(f.id);
+    } catch (error) {
+      // Not retried here: a timeout may still have created the issue. The
+      // marker check on the next run prevents a duplicate either way.
+      failure = error instanceof AlertDeliveryError ? error : new AlertDeliveryError(error instanceof Error ? error.message : String(error));
+      skipped.push(f.id);
+    }
   }
-  return { created, existing: already, skipped };
+  return { created, existing: already, skipped, ...(failure ? { error: failure } : {}) };
 }

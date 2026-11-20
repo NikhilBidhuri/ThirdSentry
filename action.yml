@@ -39,15 +39,26 @@ inputs:
   alerts:
     description: Send alerts for enabled channels (credentials must be passed as env on this step).
     default: 'true'
+  persist-state:
+    description: >-
+      Keep ThirdSentry's finding/alert state between runs in the Actions cache, so
+      scheduled runs do not re-send alerts for findings that were already alerted.
+    default: 'true'
+  state-key:
+    description: Cache key prefix for the persisted state. Default is derived from working-directory, config and site.
+    default: ''
 
 outputs:
   exit-code:
     description: ThirdSentry exit code (0 ok, 1 findings over threshold, 2 config error, 3 incomplete scan, 4 internal error).
     value: ${{ steps.scan.outputs.exit-code }}
   report-dir:
-    description: Directory containing the generated reports.
+    description: Directory containing the generated reports (report.json, report.sarif, report.html).
     value: ${{ steps.scan.outputs.report-dir }}
 
+# Security: inputs are never expanded inside `run:` scripts (that would allow
+# shell injection through workflow inputs). They are passed as environment
+# variables and quoted.
 runs:
   using: composite
   steps:
@@ -58,22 +69,38 @@ runs:
         npm ci --ignore-scripts --no-audit --no-fund
         npx tsc -p tsconfig.build.json
 
-    - name: Resolve Playwright version
+    - name: Resolve Playwright version and browsers
       id: pw
       shell: bash
       working-directory: ${{ github.action_path }}
-      run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      env:
+        TS_BROWSERS: ${{ inputs.browsers }}
+      run: |
+        read -r -a list <<< "$TS_BROWSERS"
+        [ "${#list[@]}" -gt 0 ] || list=(chromium)
+        for b in "${list[@]}"; do
+          if ! [[ "$b" =~ ^[a-z][a-z0-9-]{0,40}$ ]]; then
+            echo "::error::Invalid browser name in the 'browsers' input: only lowercase names such as chromium, firefox, webkit are allowed."
+            exit 2
+          fi
+        done
+        echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+        echo "browsers=${list[*]}" >> "$GITHUB_OUTPUT"
 
     - name: Cache Playwright browsers
       uses: actions/cache@v4
       with:
         path: ~/.cache/ms-playwright
-        key: thirdsentry-playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ inputs.browsers }}
+        key: thirdsentry-playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ steps.pw.outputs.browsers }}
 
     - name: Install browsers and system dependencies
       shell: bash
       working-directory: ${{ github.action_path }}
-      run: npx playwright install --with-deps ${{ inputs.browsers }}
+      env:
+        TS_BROWSERS: ${{ steps.pw.outputs.browsers }}
+      run: |
+        read -r -a list <<< "$TS_BROWSERS"
+        npx playwright install --with-deps "${list[@]}"
 
     - name: Allow Chromium's sandbox on Ubuntu runners
       if: runner.os == 'Linux'
@@ -82,6 +109,55 @@ runs:
       # renderer sandbox needs. Relax it on the (ephemeral) runner so the
       # sandbox can stay enabled.
       run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+    - name: Resolve ThirdSentry paths
+      id: paths
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SD_CONFIG: ${{ inputs.config }}
+        SD_SITE: ${{ inputs.site }}
+        SD_STATE_KEY: ${{ inputs.state-key }}
+        SD_WORKDIR: ${{ inputs.working-directory }}
+        SD_LOADER: ${{ github.action_path }}/dist/config/loader.js
+        SD_RUNNER_OS: ${{ runner.os }}
+      run: |
+        # The state directory follows storageDir and the config location, so it is
+        # read from the configuration rather than assumed to be .thirdsentry/state.
+        state_dir=$(node --input-type=module -e '
+          import { pathToFileURL } from "node:url";
+          const [loader, config] = process.argv.slice(1);
+          const { loadConfig } = await import(pathToFileURL(loader).href);
+          const resolved = await loadConfig({ configPath: config });
+          console.log(resolved.paths.state);
+        ' "$SD_LOADER" "$SD_CONFIG") || state_dir=''
+        echo "state-dir=$state_dir" >> "$GITHUB_OUTPUT"
+        if [ -n "$SD_STATE_KEY" ]; then
+          prefix="$SD_STATE_KEY"
+        else
+          scope=$(node -e 'console.log(require("node:crypto").createHash("sha256").update(process.argv[1]).digest("hex").slice(0, 16))' "$SD_WORKDIR|$SD_CONFIG|$SD_SITE")
+          prefix="thirdsentry-state-$SD_RUNNER_OS-$scope"
+        fi
+        prefix=$(printf '%s' "$prefix" | tr -c 'A-Za-z0-9._-' '-')
+        echo "state-key-prefix=$prefix-" >> "$GITHUB_OUTPUT"
+        echo "report-dir=$RUNNER_TEMP/thirdsentry-reports" >> "$GITHUB_OUTPUT"
+
+    # Finding/alert state must survive between runs, or every scheduled run would
+    # alert again on findings that were already alerted. Restore the newest state
+    # for this scope by key prefix; it is saved again below under a unique key.
+    - name: Restore ThirdSentry state
+      id: state-restore
+      if: inputs.persist-state == 'true' && steps.paths.outputs.state-dir != ''
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.paths.outputs.state-dir }}
+        key: ${{ steps.paths.outputs.state-key-prefix }}${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: ${{ steps.paths.outputs.state-key-prefix }}
+
+    - name: Warn about missing state
+      if: inputs.persist-state == 'true' && steps.paths.outputs.state-dir != '' && steps.state-restore.outputs.cache-matched-key == ''
+      shell: bash
+      run: echo "::warning::No previous ThirdSentry state was found in the Actions cache (first run, or the cache entry was evicted). Findings that were alerted before may be alerted once more."
 
     - name: Run ThirdSentry scan
       id: scan
@@ -94,8 +170,12 @@ runs:
         SD_FORMATS: ${{ inputs.formats }}
         SD_ALERTS: ${{ inputs.alerts }}
         SD_BIN: ${{ github.action_path }}/dist/cli/bin.js
+        SD_REPORT_DIR: ${{ steps.paths.outputs.report-dir }}
       run: |
-        args=(--config "$SD_CONFIG" scan --format "$SD_FORMATS")
+        # Reports go to an explicit directory outside the repository (and not a
+        # dot-directory, which upload-artifact v4.4+ skips), whatever storageDir is.
+        mkdir -p "$SD_REPORT_DIR"
+        args=(--config "$SD_CONFIG" scan --format "$SD_FORMATS" --output "$SD_REPORT_DIR")
         [ -n "$SD_SITE" ] && args+=(--site "$SD_SITE")
         [ -n "$SD_FAIL_ON" ] && args+=(--fail-on "$SD_FAIL_ON")
         [ "$SD_ALERTS" != "true" ] && args+=(--no-alerts)
@@ -104,32 +184,41 @@ runs:
         code=$?
         set -e
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
-        echo "report-dir=$(pwd)/.thirdsentry/reports" >> "$GITHUB_OUTPUT"
-        if [ -f .thirdsentry/reports/report.json ]; then
+        echo "report-dir=$SD_REPORT_DIR" >> "$GITHUB_OUTPUT"
+        if [ -f "$SD_REPORT_DIR/report.sarif" ]; then echo "sarif-file=$SD_REPORT_DIR/report.sarif" >> "$GITHUB_OUTPUT"; fi
+        if [ -f "$SD_REPORT_DIR/report.json" ]; then
           {
             echo "## ThirdSentry"
-            node -e "const r=require(process.argv[1]); console.log(r.headline); console.log(''); console.log('| Severity | Count |'); console.log('|---|---|'); for (const [k,v] of Object.entries(r.findingCounts)) console.log('| '+k+' | '+v+' |');" "$(pwd)/.thirdsentry/reports/report.json"
+            node -e "const r=require(process.argv[1]); console.log(r.headline); console.log(''); console.log('| Severity | Count |'); console.log('|---|---|'); for (const [k,v] of Object.entries(r.findingCounts)) console.log('| '+k+' | '+v+' |');" "$SD_REPORT_DIR/report.json"
           } >> "$GITHUB_STEP_SUMMARY"
         fi
 
+    - name: Save ThirdSentry state
+      if: always() && inputs.persist-state == 'true' && steps.paths.outputs.state-dir != ''
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ steps.paths.outputs.state-dir }}
+        key: ${{ steps.paths.outputs.state-key-prefix }}${{ github.run_id }}-${{ github.run_attempt }}
+
     - name: Upload SARIF to Code Scanning
-      if: always() && inputs.upload-sarif == 'true' && hashFiles(format('{0}/.thirdsentry/reports/report.sarif', inputs.working-directory)) != ''
+      if: always() && inputs.upload-sarif == 'true' && steps.scan.outputs.sarif-file != ''
       uses: github/codeql-action/upload-sarif@v3
       with:
-        sarif_file: ${{ inputs.working-directory }}/.thirdsentry/reports/report.sarif
+        sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: ${{ inputs.sarif-category }}
 
     - name: Upload reports
-      if: always() && inputs.upload-artifact == 'true'
+      if: always() && inputs.upload-artifact == 'true' && steps.scan.outputs.report-dir != ''
       uses: actions/upload-artifact@v4
       with:
         name: thirdsentry-report-${{ github.run_id }}-${{ github.run_attempt }}
         # Only the reports; raw scan results and state stay on the runner.
         path: |
-          ${{ inputs.working-directory }}/.thirdsentry/reports/report.json
-          ${{ inputs.working-directory }}/.thirdsentry/reports/report.sarif
-          ${{ inputs.working-directory }}/.thirdsentry/reports/report.html
+          ${{ steps.scan.outputs.report-dir }}/report.json
+          ${{ steps.scan.outputs.report-dir }}/report.sarif
+          ${{ steps.scan.outputs.report-dir }}/report.html
         if-no-files-found: ignore
+        include-hidden-files: false
         retention-days: ${{ inputs.artifact-retention-days }}
 
     - name: Apply ThirdSentry result

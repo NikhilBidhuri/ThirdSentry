@@ -12,7 +12,7 @@ import { createBaseline } from '../../src/baseline/baseline-manager.js';
 import { loadConfig, type ResolvedConfig } from '../../src/config/loader.js';
 import { compareSite } from '../../src/monitoring/comparison-engine.js';
 import { buildFindings } from '../../src/monitoring/finding-engine.js';
-import { loadFindingState } from '../../src/monitoring/dedup-state.js';
+import { loadFindingState, type FindingState } from '../../src/monitoring/dedup-state.js';
 import type { AnalysisReport } from '../../src/types/report.js';
 import type { Finding } from '../../src/types/findings.js';
 import { page, scriptResource, site, destination } from '../fixtures/builders.js';
@@ -90,26 +90,30 @@ describe('alert payload', () => {
     expect(modified?.evidence.find((e) => e.label === 'Behaviour matches')?.value).toContain('TS-SENSITIVE-FIELD-ACCESS');
   });
 
-  it('selects only unsuppressed findings above the threshold that were not alerted yet', () => {
+  it('selects only unsuppressed findings above the threshold that were not alerted yet (per channel)', () => {
     const fs = findings();
-    const state = { version: 1 as const, findings: {} as Record<string, { firstSeen: string; lastSeen: string; timesSeen: number; severity: string; lastAlertedAt?: string; lastAlertedSeverity?: string }> };
-    const all = selectFindingsForAlert(report(fs), state, { minSeverity: 'info', repeatAfterHours: 0 });
+    const now = new Date('2026-01-01T12:00:00Z');
+    const cfg = { minSeverity: 'info' as const, repeatAfterHours: 0 };
+    const state: FindingState = { version: 2, findings: {} };
+    const all = selectFindingsForAlert(report(fs), state, cfg, now, 'slack');
     expect(all.length).toBe(fs.length);
     const first = fs[0] as Finding;
-    state.findings[first.id] = { firstSeen: 'x', lastSeen: 'x', timesSeen: 1, severity: first.severity, lastAlertedAt: '2026-01-01T00:00:00Z', lastAlertedSeverity: first.severity };
-    expect(selectFindingsForAlert(report(fs), state, { minSeverity: 'info', repeatAfterHours: 0 }).map((f) => f.id)).not.toContain(first.id);
-    expect(selectFindingsForAlert(report(fs), state, { minSeverity: 'info', repeatAfterHours: 1 }, new Date('2026-01-02')).map((f) => f.id)).toContain(first.id);
-    state.findings[first.id] = { ...(state.findings[first.id] as { firstSeen: string; lastSeen: string; timesSeen: number; severity: string }), lastAlertedAt: '2026-01-01T00:00:00Z', lastAlertedSeverity: 'info' };
-    expect(selectFindingsForAlert(report(fs), state, { minSeverity: 'info', repeatAfterHours: 0 }).map((f) => f.id)).toContain(first.id);
+    state.findings[first.id] = { firstSeen: 'x', lastSeen: 'x', timesSeen: 1, severity: first.severity, alerts: { slack: { at: '2026-01-01T00:00:00Z', severity: first.severity } } };
+    expect(selectFindingsForAlert(report(fs), state, cfg, now, 'slack').map((f) => f.id)).not.toContain(first.id);
+    // Delivered through Slack only: the webhook still gets it.
+    expect(selectFindingsForAlert(report(fs), state, cfg, now, 'webhook').map((f) => f.id)).toContain(first.id);
+    expect(selectFindingsForAlert(report(fs), state, { minSeverity: 'info', repeatAfterHours: 1 }, new Date('2026-01-02'), 'slack').map((f) => f.id)).toContain(first.id);
+    state.findings[first.id] = { firstSeen: 'x', lastSeen: 'x', timesSeen: 1, severity: first.severity, alerts: { slack: { at: '2026-01-01T00:00:00Z', severity: 'info' } } };
+    expect(selectFindingsForAlert(report(fs), state, cfg, now, 'slack').map((f) => f.id)).toContain(first.id);
     const suppressed = fs.map((f) => ({ ...f, suppressed: { reason: 'x' } }));
-    expect(selectFindingsForAlert(report(suppressed), { version: 1, findings: {} }, { minSeverity: 'info', repeatAfterHours: 0 })).toEqual([]);
+    expect(selectFindingsForAlert(report(suppressed), { version: 2, findings: {} }, cfg, now, 'slack')).toEqual([]);
   });
 
   it('builds Slack Block Kit messages within Slack limits and escapes markup', () => {
     const fs = findings().map((f) => ({ ...f, title: `<!channel> ${f.title}`, reason: 'x'.repeat(5000) }));
-    const msg = slackMessage(buildAlertPayload(report(fs), fs, { maxFindings: 50, reportLocation: 'r' })) as { blocks: Array<{ text?: { text: string } }>; text: string };
+    const msg = slackMessage(buildAlertPayload(report(fs), fs, { maxFindings: 50, reportLocation: 'r' })).body;
     expect(msg.blocks.length).toBeLessThanOrEqual(50);
-    for (const b of msg.blocks) expect((b.text?.text ?? '').length).toBeLessThanOrEqual(3000);
+    for (const b of msg.blocks) expect(((b as { text?: { text: string } }).text?.text ?? '').length).toBeLessThanOrEqual(3000);
     expect(JSON.stringify(msg)).not.toContain('<!channel>');
   });
 });
@@ -143,7 +147,7 @@ describe('alert channels against local mock servers', () => {
     expect(second.selected).toBe(0);
     expect(http.requests).toHaveLength(1);
     const state = await loadFindingState(resolved.paths);
-    expect(Object.values(state.findings).every((e) => e.lastAlertedAt)).toBe(true);
+    expect(Object.values(state.findings).every((e) => e.alerts?.webhook && !e.alerts.slack)).toBe(true);
   });
 
   it('retries transient failures and reports permanent ones without throwing or leaking secrets', async () => {
@@ -163,7 +167,8 @@ describe('alert channels against local mock servers', () => {
   it('reports a missing environment variable as a channel failure', async () => {
     const resolved = await project({ minSeverity: 'info', slack: { enabled: true } });
     const result = await sendAlerts(resolved, report(findings()), { env: {}, retryDelayMs: 1 });
-    expect(result.results[0]).toMatchObject({ channel: 'slack', ok: false });
+    // A configuration error cannot succeed on a retry.
+    expect(result.results[0]).toMatchObject({ channel: 'slack', ok: false, attempts: 1 });
     expect(result.results[0]?.error).toMatch(/THIRDSENTRY_SLACK_WEBHOOK/);
   });
 

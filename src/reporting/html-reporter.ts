@@ -52,7 +52,7 @@ details{margin-top:8px}summary{cursor:pointer;color:var(--muted)}ul{margin:6px 0
 `;
 
 function badge(severity: Severity): string {
-  return `<span class="badge sev-${severity}">${SEVERITY_LABEL[severity]}</span>`;
+  return `<span class="badge sev-${escapeHtml(severity)}">${SEVERITY_LABEL[severity] ?? escapeHtml(severity)}</span>`;
 }
 
 function renderFinding(f: Finding): string {
@@ -60,14 +60,15 @@ function renderFinding(f: Finding): string {
     f.previousHash !== undefined || f.currentHash !== undefined
       ? `<p class="mono muted">previous ${e(f.previousHash ?? 'none')}<br>current&nbsp; ${e(f.currentHash ?? 'none')}</p>`
       : '';
-  const signals = f.signals.map((s) => `<li><span class="mono">${s.weight >= 0 ? '+' : ''}${s.weight}</span> ${e(s.description)}</li>`).join('');
-  const evidence = f.evidence.map((x) => `<tr><th>${e(x.label)}</th><td class="mono">${e(x.value)}</td></tr>`).join('');
+  // Tolerate finding kinds this version does not know (missing optional details).
+  const signals = (f.signals ?? []).map((s) => `<li><span class="mono">${s.weight >= 0 ? '+' : ''}${s.weight}</span> ${e(s.description)}</li>`).join('');
+  const evidence = (f.evidence ?? []).map((x) => `<tr><th>${e(x.label)}</th><td class="mono">${e(x.value)}</td></tr>`).join('');
   return `<article class="card finding${f.suppressed ? ' suppressed' : ''}" id="${e(f.id)}">
-<header>${badge(f.severity)}<h3>${e(f.title)}</h3><span class="muted">confidence ${e(f.confidence)} · ${e(CATEGORY_TEXT[f.category] ?? f.category)} · <span class="mono">${e(f.id)}</span>${f.status ? ` · ${e(f.status)}` : ''}</span></header>
+<header>${badge(f.severity)}<h3>${e(f.title || f.kind)}</h3><span class="muted">confidence ${e(f.confidence)} · ${e(CATEGORY_TEXT[f.category] ?? f.category)} · <span class="mono">${e(f.id)}</span>${f.status ? ` · ${e(f.status)}` : ''}</span></header>
 ${f.suppressed ? `<p class="muted">Suppressed: ${e(f.suppressed.reason)}${f.suppressed.expires ? ` (until ${e(f.suppressed.expires)})` : ''}</p>` : ''}
 ${f.resourceUrl ? `<p class="mono">${e(f.resourceUrl)}</p>` : ''}
 <p>${e(f.reason)}</p>${hashes}
-<p class="next"><b>What to do:</b> ${e(f.recommendedAction.replace('<finding-id>', f.id))}</p>
+<p class="next"><b>What to do:</b> ${e((f.recommendedAction ?? 'Review the finding.').replace('<finding-id>', f.id))}</p>
 <details><summary>Why this rating (score ${f.score})</summary><ul>${signals}</ul></details>
 <details><summary>Evidence</summary><table>${evidence}</table></details>
 </article>`;
