@@ -9,7 +9,7 @@ import { writeReports, type ReportFormat, type WrittenReports } from '../reporti
 import { ensureScanReportDir } from '../storage/filesystem-store.js';
 import { assertSiteName, baselinePath } from '../storage/paths.js';
 import { SEVERITY_ORDER, type Finding, type Severity } from '../types/findings.js';
-import type { ScanResult } from '../types/index.js';
+import type { ScanResult, SiteResult } from '../types/index.js';
 import type { AnalysisReport, PciReportSection, ReportHealth, SiteComparisonSummary } from '../types/report.js';
 import { buildHealthFindings } from '../health/health-finding.js';
 import { loadHealthState, recordScanHealth, saveHealthState } from '../health/health-state.js';
@@ -18,7 +18,7 @@ import { ExitCode, type ExitCodeValue } from '../utils/exit-codes.js';
 import { copyFileAtomic, writeJsonAtomic } from '../utils/fs.js';
 import { toolVersion } from '../utils/version.js';
 import type { ComparisonResult } from './comparison-engine.js';
-import { compareSiteWithPolicies, usageWithoutBaseline, type PolicySiteUsage } from '../policies/apply.js';
+import { applyPoliciesToSite, compareSiteWithPolicies, usageWithoutBaseline, type PolicySiteUsage } from '../policies/apply.js';
 import { isSilentPolicyFinding } from '../policies/finding-hooks.js';
 import { buildPolicyReport } from '../policies/report.js';
 import { buildFindings } from './finding-engine.js';
@@ -110,6 +110,8 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
   const libraryDb = libraryConfig.detect ? await loadLibraryDb(resolved.paths.cache, { now, maxAgeDays: libraryConfig.maxDbAgeDays }) : undefined;
   for (const w of libraryDb?.info.warnings ?? []) if (libraryDb?.info.source === 'cache' || libraryDb?.info.stale) getLogger('analysis').warn(w);
   const baselines = new Map<string, Baseline | undefined>();
+  /** Scan and baseline as seen through script policies (policy identities applied), per site. */
+  const policyViews = new Map<string, { site: SiteResult; baseline: Baseline }>();
 
   for (const site of scan.sites) {
     const libraryFindings = libraryDb ? buildLibraryFindings(site, { db: libraryDb, libraries: libraryConfig, risk: resolved.config.risk, now }) : [];
@@ -137,6 +139,7 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
     const applied = compareSiteWithPolicies(site, baseline, resolved.config, { domains: resolved.config.domains, now });
     const comparison = applied.comparison;
     policyUsage.push(applied.usage);
+    policyViews.set(site.name, { site: applied.site, baseline: applied.baseline });
     comparisons.set(site.name, comparison);
     const siteFindings = buildFindings(comparison.changes, {
       site: applied.site,
@@ -192,7 +195,11 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
   for (const site of scan.sites) {
     const inventory = await loadInventory(resolved.paths, site.name);
     if (!inventory.exists && !resolved.config.pci.requireJustification) continue;
-    const result = buildInventory({ site, baseline: baselines.get(site.name), entries: inventory.entries, now });
+    // Use the policy view, so a script governed by a path-versions policy (e.g. a rotating,
+    // hash-named bundle) is one inventory row with a stable identity, not a new
+    // "unjustified" finding every time the vendor renames the file.
+    const view = policyViews.get(site.name) ?? { site: applyPoliciesToSite(site, resolved.config, now), baseline: baselines.get(site.name) };
+    const result = buildInventory({ site: view.site, baseline: view.baseline, entries: inventory.entries, now });
     pciSites.push(pciSectionFor(site.name, result, { path: relative(resolved.baseDir, inventory.path) || inventory.path, exists: inventory.exists }));
     if (resolved.config.pci.requireJustification) findings.push(...inventoryFindings(result, { risk: resolved.config.risk, now }));
   }
