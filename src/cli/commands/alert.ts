@@ -17,7 +17,7 @@ interface AlertOptions {
   test?: boolean;
 }
 
-const NO_CHANNEL = 'no alert channel is enabled (set alerts.<slack|webhook|github|email>.enabled: true in thirdsentry.yml)';
+const NO_CHANNEL = 'no alert channel is enabled (set alerts.<slack|webhook|github|email|pagerduty|teams>.enabled: true in thirdsentry.yml)';
 
 export function printAlertResult(result: AlertRunResult): void {
   const label = result.test ? 'Test alert' : 'Alert';

@@ -105,7 +105,7 @@ export function selectFindingsForAlert(
     if (f.suppressed) return false;
     if (rank(f.severity) < rank(config.minSeverity)) return false;
     const mark = lastAlert(state.findings[f.id], channel);
-    if (!mark) return true;
+    if (!mark || mark.resolvedAt) return true;
     if (rank(f.severity) > rank(mark.severity)) return true;
     if (config.repeatAfterHours > 0) {
       return now.getTime() - Date.parse(mark.at) >= config.repeatAfterHours * 3_600_000;

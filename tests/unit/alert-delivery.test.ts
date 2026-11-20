@@ -188,7 +188,7 @@ describe('per-channel delivery state', () => {
     expect(state.version).toBe(2);
     const entry = state.findings[(fs[0] as Finding).id];
     expect(entry?.lastAlertedAt).toBeUndefined();
-    expect(Object.keys(entry?.alerts ?? {}).sort()).toEqual(['email', 'github', 'slack', 'webhook']);
+    expect(Object.keys(entry?.alerts ?? {}).sort()).toEqual(['email', 'github', 'pagerduty', 'slack', 'teams', 'webhook']);
   });
 });
 

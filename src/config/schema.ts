@@ -305,6 +305,34 @@ export const EmailAlertSchema = z
   })
   .strict();
 
+export const PagerDutyAlertSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    /** Events API v2 integration (routing) key. */
+    routingKey: envString.default('${THIRDSENTRY_PAGERDUTY_ROUTING_KEY}'),
+    minSeverity: alertSeverity.default('high'),
+    /** Events API endpoint (use https://events.eu.pagerduty.com/v2/enqueue for the EU service region). */
+    apiUrl: envString.default('https://events.pagerduty.com/v2/enqueue'),
+    /** Send "resolve" when a triggered finding is gone from the latest complete scan of its site. */
+    autoResolve: z.boolean().default(false),
+    /** Most events (triggers, and separately resolves) sent per run; the rest stays pending. */
+    maxEventsPerRun: z.number().int().min(1).max(100).default(20),
+    /** Allow a plain-http apiUrl (tests only). Off by default. */
+    allowInsecureHttp: z.boolean().default(false),
+  })
+  .strict();
+
+export const TeamsAlertSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    /** Workflows (Power Automate) "post to a channel when a webhook request is received" URL. */
+    webhookUrl: envString.default('${THIRDSENTRY_TEAMS_WEBHOOK}'),
+    minSeverity: alertSeverity.optional(),
+    /** Allow a plain-http URL (tests only). Off by default. */
+    allowInsecureHttp: z.boolean().default(false),
+  })
+  .strict();
+
 export const AlertsSchema = z
   .object({
     /** Only findings at or above this severity are sent (per-channel minSeverity overrides). */
@@ -321,6 +349,8 @@ export const AlertsSchema = z
     webhook: WebhookAlertSchema.prefault({}),
     github: GithubAlertSchema.prefault({}),
     email: EmailAlertSchema.prefault({}),
+    pagerduty: PagerDutyAlertSchema.prefault({}),
+    teams: TeamsAlertSchema.prefault({}),
   })
   .strict();
 
