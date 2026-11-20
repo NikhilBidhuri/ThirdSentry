@@ -7,6 +7,7 @@ import { SEVERITY_WEIGHT } from '../analysis/rule-types.js';
 import type { DomainPolicy, RuleConfig } from '../config/schema.js';
 import type { Confidence, Evidence, Finding, Signal } from '../types/findings.js';
 import type { SiteResult } from '../types/index.js';
+import { escalatePolicyUpdate, pinMismatchTemplate, policyEvidence, policyReasonSuffix, policyUpdateTemplate, significantPolicyBehaviour } from '../policies/finding-hooks.js';
 import type { Change } from './comparison-engine.js';
 
 /**
@@ -283,6 +284,10 @@ function template(c: Change, ctx: FindingContext, sensitive: boolean): Template 
         signals: [s('denylisted-domain'), ...signals],
         confidence: 'high',
       };
+    case 'policy-accepted-update':
+      return policyUpdateTemplate(c, label, risk);
+    case 'pinned-hash-mismatch':
+      return pinMismatchTemplate(c, label, signals, risk);
     case 'iframe-origin-removed':
       return {
         title: `Iframe origin ${c.origin ?? ''} no longer embedded`,
@@ -342,8 +347,9 @@ export function buildFindings(changes: readonly Change[], ctx: FindingContext): 
     const sensitive = c.pages.some((p) => sensitivePages.has(p));
     const t = template(c, ctx, sensitive);
     const extraEvidence: Evidence[] = [];
-    if (c.kind === 'resource-modified' || c.kind === 'resource-added' || c.kind === 'resource-moved') {
-      const behaviour = behaviourSignals(c, ctx);
+    const policyUpdate = c.kind === 'policy-accepted-update';
+    if (c.kind === 'resource-modified' || c.kind === 'resource-added' || c.kind === 'resource-moved' || policyUpdate) {
+      const behaviour = policyUpdate ? significantPolicyBehaviour(behaviourSignals(c, ctx)) : behaviourSignals(c, ctx);
       t.signals.push(...behaviour.signals);
       extraEvidence.push(...behaviour.evidence);
       const referenced = (c.current?.indicators?.hosts ?? []).filter((h) => newDestinationHosts.has(h) || [...newDestinationDomains].some((d) => h === d || h.endsWith(`.${d}`)));
@@ -353,6 +359,7 @@ export function buildFindings(changes: readonly Change[], ctx: FindingContext): 
       } else if (c.pages.some((p) => pagesWithNewDestination.has(p))) {
         t.signals.push(signal('correlated-new-destination', risk));
       }
+      if (policyUpdate) escalatePolicyUpdate(t, c, sensitive, risk);
     }
     const a = assess(t.signals, t.confidence, risk);
     const r = c.current;
@@ -378,8 +385,8 @@ export function buildFindings(changes: readonly Change[], ctx: FindingContext): 
       category: a.category,
       score: a.score,
       signals: t.signals,
-      reason: t.reason,
-      evidence: [...evidenceFor(c), ...extraEvidence],
+      reason: policyReasonSuffix(c.policy, t.reason),
+      evidence: [...evidenceFor(c), ...policyEvidence(c.policy), ...extraEvidence],
       recommendedAction: t.action,
       ...(c.pages[0] ? { page: c.pages[0] } : {}),
       ...(c.identity ? { resourceIdentity: c.identity } : {}),
@@ -387,6 +394,7 @@ export function buildFindings(changes: readonly Change[], ctx: FindingContext): 
       ...(r?.type ?? c.baseline?.type ? { resourceType: (r?.type ?? c.baseline?.type) as Finding['resourceType'] & string } : {}),
       ...(r?.party ?? c.baseline?.party ? { party: (r?.party ?? c.baseline?.party) as Finding['party'] & string } : {}),
       ...(domain ? { domain } : {}),
+      ...(c.policy ? { policy: c.policy } : {}),
       ...(c.baseline || c.kind === 'resource-modified' ? { previousHash: previousHashOf(c) } : {}),
       ...(r ? { currentHash } : {}),
     };

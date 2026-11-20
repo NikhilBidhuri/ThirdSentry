@@ -201,7 +201,11 @@ Static behaviour analysis is described in [rules.md](rules.md).
 
 ## `suppressions`
 
-A list of documented suppressions. Each entry needs a `reason` and at least one of `id`, `kind`, `rule`, `resource`, `domain`; `site` and `expires` are optional. See [rules.md](rules.md#suppressing-false-positives).
+A list of documented suppressions. Each entry needs a `reason` and at least one of `id`, `kind`, `rule`, `resource`, `domain`, `policy`; `site` and `expires` are optional. See [rules.md](rules.md#suppressing-false-positives).
+
+## `scriptPolicies`
+
+Explicit per-script policies for vendors whose scripts rotate; allowed globally and in `sites[].scriptPolicies`. Each entry has `name`, `match` (`url`, `urlPrefix`, `glob`, `identity`, `host`, `domain`, optional `pages`), `mode` (`pin`, `path-versions`, `domain-only`), a required `reason`, and optional `expires` and `owner`; `pin` also needs `hashes`. Inline, blob and data matchers are rejected. Policies never auto-apply to other registrable domains. See [policies.md](policies.md).
 
 ## `reporting`
 

@@ -38,6 +38,8 @@ const KIND_DESCRIPTIONS: Record<string, string> = {
   'denylisted-domain': 'A denylisted domain is used by the page.',
   'iframe-origin-added': 'A new iframe origin is embedded in the page.',
   'iframe-origin-removed': 'An approved iframe origin is no longer embedded.',
+  'policy-accepted-update': 'A script covered by a script policy changed; the policy accepts new versions (new behaviour is still reported).',
+  'pinned-hash-mismatch': 'A pinned script does not match any of its allowed hashes.',
 };
 
 export interface SarifOptions {

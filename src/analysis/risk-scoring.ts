@@ -56,6 +56,8 @@ export const SIGNALS = {
   'denylisted-domain': { weight: 80, description: 'The domain is on the configured denylist', suspicious: true },
   'suspicious-domain': { weight: 30, description: 'The domain matches a configured reputation warning (domains.suspicious)', suspicious: true },
   'ip-address-destination': { weight: 15, description: 'The destination is a raw IP address rather than a domain name', suspicious: true },
+  'pinned-hash-mismatch': { weight: 55, description: 'A pinned script does not match any of its allowed hashes (enforced regardless of baseline approval)', suspicious: true },
+  'policy-accepted-update': { weight: 0, description: 'The content changed, which a script policy explicitly accepts' },
   'script-references-new-destination': { weight: 25, description: 'The changed script itself references the new outbound destination', suspicious: true },
 } as const satisfies Record<string, SignalDefinition>;
 

@@ -121,6 +121,7 @@ function buildResource(c: ResourceCandidate, party: PartyContext, contents: Map<
     hashes: {
       sha256: sha,
       sri: body ? sriHash(body) : null,
+      sri384: body ? sriHash(body, 'sha384') : null,
       normalizedSha256: normalizedSha,
       normalizerVersion: normalizedSha ? NORMALIZER_VERSION : null,
     },

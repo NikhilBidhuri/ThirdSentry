@@ -39,6 +39,7 @@ export function scopeMatches(s: Suppression, f: Finding): boolean {
   if (s.id && s.id !== f.id) return false;
   if (s.kind && s.kind !== f.kind) return false;
   if (s.site && s.site !== f.site) return false;
+  if (s.policy && s.policy !== f.policy?.name) return false;
   if (s.resource) {
     const candidates = [f.resourceUrl, f.resourceIdentity].filter((v): v is string => v !== undefined);
     if (!candidates.some((c) => matchesGlob(c, s.resource as string))) return false;

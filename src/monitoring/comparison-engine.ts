@@ -2,6 +2,7 @@ import type { Baseline, BaselineResource } from '../baseline/baseline-schema.js'
 import type { DomainPolicy } from '../config/schema.js';
 import { EMPTY_DOMAIN_POLICY, evaluateDomain } from '../analysis/domain-analyzer.js';
 import type { ChangeKind } from '../types/findings.js';
+import type { PolicyRef } from '../policies/types.js';
 import type { ScriptResource, SiteResult } from '../types/index.js';
 
 /**
@@ -32,6 +33,8 @@ export interface Change {
   readonly origin?: string;
   readonly pages: readonly string[];
   readonly details: Readonly<Record<string, string>>;
+  /** Script policy governing the resource (set by src/policies). */
+  readonly policy?: PolicyRef;
 }
 
 export interface ComparisonResult {

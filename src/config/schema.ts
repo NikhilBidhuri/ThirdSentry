@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { RULES_BY_ID } from '../analysis/indicator-rules.js';
+import { checkPolicyNames, ScriptPolicySchema } from '../policies/schema.js';
 
 /**
  * ThirdSentry configuration schema (thirdsentry.yml).
@@ -66,6 +67,8 @@ export const SiteSchema = z
     firstPartyDomains: z.array(hostPattern).default([]),
     /** Query parameter names ignored when computing canonical resource identity (cache busters by default; set [] to disable). */
     ignoreQueryParams: z.array(z.string().min(1)).default([...DEFAULT_IGNORE_QUERY_PARAMS]),
+    /** Script policies for this site (see docs/policies.md); they take precedence over a global policy of equal specificity. */
+    scriptPolicies: z.array(ScriptPolicySchema).default([]),
     browser: BrowserOptionsSchema.partial().optional(),
     scan: ScanOptionsSchema.partial().optional(),
   })
@@ -235,6 +238,8 @@ export const SuppressionSchema = z
     resource: z.string().max(4096).optional(),
     /** Domain/host pattern. */
     domain: hostPattern.optional(),
+    /** Name of a script policy (scriptPolicies): matches findings that policy affected. */
+    policy: z.string().max(64).optional(),
     /** Why this is suppressed. Required: undocumented suppressions are not allowed. */
     reason: z.string().min(3).max(2_000),
     /** ISO date after which the suppression stops applying. */
@@ -244,7 +249,7 @@ export const SuppressionSchema = z
       .optional(),
   })
   .strict()
-  .refine((s) => s.id ?? s.kind ?? s.rule ?? s.resource ?? s.domain, 'a suppression needs at least one of id, kind, rule, resource or domain');
+  .refine((s) => s.id ?? s.kind ?? s.rule ?? s.resource ?? s.domain ?? s.policy, 'a suppression needs at least one of id, kind, rule, resource, domain or policy');
 
 /**
  * Alert settings. Values may reference environment variables as ${NAME};
@@ -410,6 +415,8 @@ export const ConfigSchema = z
     rules: z.record(z.string().regex(/^TS-[A-Z0-9-]+$/, 'rule ids look like TS-EVAL'), RuleConfigSchema).default({}),
     domains: DomainPolicySchema.prefault({}),
     suppressions: z.array(SuppressionSchema).default([]),
+    /** Explicit per-script policies for vendors whose scripts rotate (pin, path-versions, domain-only). */
+    scriptPolicies: z.array(ScriptPolicySchema).default([]),
     reporting: ReportingSchema.prefault({}),
     alerts: AlertsSchema.prefault({}),
     health: HealthSchema.prefault({}),
@@ -425,6 +432,7 @@ export const ConfigSchema = z
       }
       seen.add(site.name);
     });
+    checkPolicyNames(cfg.scriptPolicies, cfg.sites, (path, message) => ctx.addIssue({ code: 'custom', path, message }));
     for (const id of Object.keys(cfg.rules)) {
       if (!RULES_BY_ID.has(id)) {
         ctx.addIssue({ code: 'custom', path: ['rules', id], message: `unknown rule "${id}" (known: ${[...RULES_BY_ID.keys()].join(', ')})` });

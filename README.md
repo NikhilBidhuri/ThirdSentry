@@ -15,6 +15,7 @@ ThirdSentry visits your pages in a real browser, records every script that runs,
 - **Hashes everything**: SHA-256 of the exact bytes, an SRI value, and a second hash of conservatively normalised code, so formatting-only changes can be told apart from code changes.
 - **Approved baselines** stored as Git-friendly JSON. Scans never approve anything automatically.
 - **Change detection**: new, removed and modified scripts, new third-party domains, redirect changes, iframe origin changes and new outbound destinations.
+- **Script policies** (pin, path-versions, domain-only) for vendors whose scripts rotate: explicit, expiring and reviewable, and they never hide new suspicious behaviour ([docs/policies.md](docs/policies.md)).
 - **Static analysis** with Babel ASTs for behaviours worth reviewing (eval, script injection, cookie/storage/form access, beacons, WebSockets, obfuscation, and sensitive-data-plus-transmission combinations), with explainable risk scoring.
 - **Reports** in JSON, SARIF (GitHub Code Scanning) and HTML; **alerts** via Slack, Microsoft Teams, PagerDuty, webhooks, GitHub Issues and email.
 - **CSP linter** for Content-Security-Policy headers.
@@ -64,6 +65,7 @@ my-store https://www.example.com/ — complete (chromium 140.0.7339.16)
 | [Configuration](docs/configuration.md) | every `thirdsentry.yml` option |
 | [CLI reference](docs/cli.md) | commands, flags and exit codes |
 | [Baselines](docs/baselines.md) | approving and updating what is expected |
+| [Script policies](docs/policies.md) | pin / path-versions / domain-only for rotating vendor scripts |
 | [Detection rules](docs/rules.md) | static-analysis rules and risk scoring |
 | [Alerts](docs/alerts.md) | Slack, Teams, PagerDuty, webhook, GitHub Issues, email |
 | [GitHub Actions](docs/github-actions.md) | scheduled scans in CI |

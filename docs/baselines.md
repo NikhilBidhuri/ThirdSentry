@@ -107,8 +107,12 @@ A site without a baseline cannot be compared, so `scan` and `analyze` exit `3` (
 | Same requested URL now redirects elsewhere | `redirect-changed` |
 | Content no longer capturable | `content-unavailable` |
 | `integrity` attribute does not match | `sri-mismatch` |
+| Governed by a `path-versions`/`domain-only` script policy: content differs | `policy-accepted-update` (informational; new behaviour raises it, see [policies.md](policies.md)) |
+| Governed by a `pin` policy: content is not an allowed hash | `pinned-hash-mismatch` (high, regardless of baseline approval) |
 | New script, outbound or iframe domain/origin | `new-script-domain`, `new-outbound-domain`, `new-outbound-host`, `iframe-origin-added` |
 
 **Resource identity** is the URL the page requested (first redirect hop), with the fragment removed and query parameters sorted, so that "the same script" is recognised even when its content changes. Inline scripts are identified by page, frame and DOM position, falling back to content matching when their position shifts. Blob scripts are identified by page, frame and content, because blob URLs are random.
 
 If a vendor appends a cache-busting parameter (`?v=1699999999`), list the parameter name in the site's `ignoreQueryParams` so that the identity stays stable. The stored URL still contains the full query string.
+
+**Script policies** change identity for the scripts they govern: under a `path-versions` or `domain-only` policy every matching URL is tracked as `policy:<name>`, so approving a `policy-accepted-update` finding approves the policy identity, and a baseline written before the policy existed keeps working (matching resources are merged when comparing). See [policies.md](policies.md).
