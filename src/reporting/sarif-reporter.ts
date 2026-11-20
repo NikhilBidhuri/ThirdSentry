@@ -1,5 +1,6 @@
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { relative } from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { RULES_BY_ID } from '../analysis/indicator-rules.js';
 import { explainScore } from '../analysis/risk-scoring.js';
 import type { Finding, Severity } from '../types/findings.js';
@@ -42,12 +43,52 @@ const KIND_DESCRIPTIONS: Record<string, string> = {
 export interface SarifOptions {
   /** Absolute path of thirdsentry.yml. */
   readonly configPath: string;
-  /** Repository root used to make artifact paths relative (default: config directory's project root). */
-  readonly baseDir: string;
+  /**
+   * Repository root used to make artifact paths relative. Default:
+   * GITHUB_WORKSPACE when it contains the config, else the enclosing Git
+   * work tree, else the config's directory.
+   */
+  readonly baseDir?: string;
+  readonly env?: NodeJS.ProcessEnv;
+}
+
+function isInside(dir: string, path: string): boolean {
+  const rel = relative(dir, path);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
+/**
+ * Code Scanning resolves artifact URIs against the repository root, so the
+ * config path must be relative to that root (not to the config's directory,
+ * which differs when thirdsentry.yml lives in a subdirectory).
+ */
+export function sarifBaseDir(configPath: string, env: NodeJS.ProcessEnv = process.env): string {
+  const config = resolve(configPath);
+  const workspace = env.GITHUB_WORKSPACE;
+  if (workspace && isInside(resolve(workspace), config)) return resolve(workspace);
+  for (let dir = dirname(config); ; dir = dirname(dir)) {
+    if (existsSync(resolve(dir, '.git'))) return dir;
+    if (dirname(dir) === dir) break;
+  }
+  return dirname(config);
+}
+
+/** Description used for finding kinds this version does not know (e.g. added by newer modules). */
+function kindDescription(kind: string): string {
+  return KIND_DESCRIPTIONS[kind] ?? `ThirdSentry finding of kind "${kind}".`;
+}
+
+function securitySeverity(severity: string): string {
+  return SECURITY_SEVERITY[severity as Severity] ?? SECURITY_SEVERITY.info;
+}
+
+function level(severity: string): 'error' | 'warning' | 'note' {
+  return LEVEL[severity as Severity] ?? 'note';
 }
 
 function ruleIdFor(f: Finding): string {
-  return `thirdsentry/${f.kind}`;
+  const kind = String(f.kind || 'unknown').replace(/[^A-Za-z0-9._-]/g, '-');
+  return `thirdsentry/${kind}`;
 }
 
 async function siteLines(configPath: string): Promise<Map<string, number>> {
@@ -67,43 +108,46 @@ async function siteLines(configPath: string): Promise<Map<string, number>> {
 function messageFor(f: Finding): string {
   const parts = [f.title + (f.resourceUrl ? `: ${f.resourceUrl}` : '') + '.', f.reason];
   if (f.previousHash !== undefined || f.currentHash !== undefined) parts.push(`Previous SHA-256: ${f.previousHash ?? 'none'}. Current SHA-256: ${f.currentHash ?? 'none'}.`);
-  parts.push(`Severity ${f.severity}, confidence ${f.confidence}. Why: ${explainScore(f.signals)}.`);
-  parts.push(`Next step: ${f.recommendedAction.replace('<finding-id>', f.id)}`);
+  parts.push(`Severity ${f.severity}, confidence ${f.confidence}. Why: ${explainScore(f.signals ?? [])}.`);
+  if (f.recommendedAction) parts.push(`Next step: ${f.recommendedAction.replace('<finding-id>', f.id)}`);
   return parts.join(' ');
 }
 
 export async function buildSarif(report: AnalysisReport, options: SarifOptions): Promise<Record<string, unknown>> {
   const lines = await siteLines(options.configPath);
-  const configUri = relative(options.baseDir, options.configPath).split('\\').join('/') || 'thirdsentry.yml';
+  const baseDir = options.baseDir ?? sarifBaseDir(options.configPath, options.env);
+  const configRel = relative(baseDir, options.configPath);
+  // Outside the repository: fall back to the file name rather than a "../" path.
+  const configUri = (configRel && !configRel.startsWith('..') && !isAbsolute(configRel) ? configRel : basename(options.configPath)).split('\\').join('/') || 'thirdsentry.yml';
 
   const homepage = projectHomepage();
   const ruleIds = [...new Set(report.findings.map(ruleIdFor))].sort();
   const rules = ruleIds.map((id) => {
     const kind = id.slice('thirdsentry/'.length);
-    const worst = report.findings.filter((f) => ruleIdFor(f) === id).reduce<Severity>((w, f) => (SECURITY_SEVERITY[f.severity] > SECURITY_SEVERITY[w] ? f.severity : w), 'info');
+    const worst = report.findings.filter((f) => ruleIdFor(f) === id).reduce<Severity>((w, f) => (Number(securitySeverity(f.severity)) > Number(securitySeverity(w)) ? f.severity : w), 'info');
     return {
       id,
       name: kind.replace(/(^|-)(\w)/g, (_m, _d: string, c: string) => c.toUpperCase()),
-      shortDescription: { text: KIND_DESCRIPTIONS[kind] ?? kind },
-      fullDescription: { text: `${KIND_DESCRIPTIONS[kind] ?? kind} ThirdSentry reports changes and behaviour worth reviewing; a result is not proof of malicious activity.` },
+      shortDescription: { text: kindDescription(kind) },
+      fullDescription: { text: `${kindDescription(kind)} ThirdSentry reports changes and behaviour worth reviewing; a result is not proof of malicious activity.` },
       ...(homepage ? { helpUri: `${homepage.replace(/\/$/, '')}/blob/main/docs/rules.md` } : {}),
       help: { text: 'Review the change, confirm it with the vendor if unexpected, and approve it with "thirdsentry baseline --approve <finding-id>" once it is understood.' },
-      defaultConfiguration: { level: LEVEL[worst] },
-      properties: { tags: ['security', 'supply-chain', 'third-party-javascript'], 'security-severity': SECURITY_SEVERITY[worst], precision: 'medium' },
+      defaultConfiguration: { level: level(worst) },
+      properties: { tags: ['security', 'supply-chain', 'third-party-javascript'], 'security-severity': securitySeverity(worst), precision: 'medium' },
     };
   });
 
   const results = report.findings.map((f) => {
-    const behaviour = f.signals.filter((s) => s.id.includes('rule:')).map((s) => s.id.replace(/^(new-)?rule:/, ''));
+    const behaviour = (f.signals ?? []).filter((s) => s.id.includes('rule:')).map((s) => s.id.replace(/^(new-)?rule:/, ''));
     return {
       ruleId: ruleIdFor(f),
       ruleIndex: ruleIds.indexOf(ruleIdFor(f)),
-      level: LEVEL[f.severity],
+      level: level(f.severity),
       message: { text: messageFor(f) },
       locations: [
         {
           physicalLocation: { artifactLocation: { uri: configUri }, region: { startLine: lines.get(f.site) ?? 1 } },
-          logicalLocations: [{ name: f.site, kind: 'module', fullyQualifiedName: `${f.site}${f.page ?? ''}` }],
+          ...(f.site ? { logicalLocations: [{ name: f.site, kind: 'module', fullyQualifiedName: `${f.site}${f.page ?? ''}` }] } : {}),
         },
       ],
       partialFingerprints: { 'thirdsentryFindingId/v1': f.id },
@@ -122,7 +166,7 @@ export async function buildSarif(report: AnalysisReport, options: SarifOptions):
         score: f.score,
         signals: f.signals,
         behaviourRules: behaviour.map((id) => ({ id, name: RULES_BY_ID.get(id)?.name ?? id })),
-        'security-severity': SECURITY_SEVERITY[f.severity],
+        'security-severity': securitySeverity(f.severity),
       },
       ...(f.suppressed ? { suppressions: [{ kind: 'external', justification: f.suppressed.reason }] } : {}),
     };
@@ -134,7 +178,9 @@ export async function buildSarif(report: AnalysisReport, options: SarifOptions):
     runs: [
       {
         tool: { driver: { name: 'ThirdSentry', ...(homepage ? { informationUri: homepage } : {}), semanticVersion: report.toolVersion, version: report.toolVersion, rules } },
-        automationDetails: { id: `thirdsentry/${report.sites.map((s) => s.name).join('+')}/` },
+        // No automationDetails.id: the upload step's `category` identifies the
+        // analysis. Deriving it from the scanned sites made every --site subset
+        // (or a newly added site) a separate analysis whose old alerts never close.
         invocations: [
           {
             executionSuccessful: report.scanStatus === 'complete',

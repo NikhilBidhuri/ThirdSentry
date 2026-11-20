@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createBaseline } from '../../src/baseline/baseline-manager.js';
@@ -6,7 +6,7 @@ import { compareSite } from '../../src/monitoring/comparison-engine.js';
 import { buildFindings } from '../../src/monitoring/finding-engine.js';
 import { renderHtmlReport, escapeHtml } from '../../src/reporting/html-reporter.js';
 import { renderJsonReport } from '../../src/reporting/json-reporter.js';
-import { buildSarif } from '../../src/reporting/sarif-reporter.js';
+import { buildSarif, sarifBaseDir } from '../../src/reporting/sarif-reporter.js';
 import type { Finding } from '../../src/types/findings.js';
 import type { AnalysisReport } from '../../src/types/report.js';
 import { destination, scan, scriptResource, site } from '../fixtures/builders.js';
@@ -97,5 +97,52 @@ describe('HTML report', () => {
 
   it('escapes all HTML special characters', () => {
     expect(escapeHtml(`<a href="x" onclick='y'>&</a>`)).toBe('&lt;a href=&quot;x&quot; onclick=&#39;y&#39;&gt;&amp;&lt;/a&gt;');
+  });
+});
+
+describe('SARIF analysis identity and paths', () => {
+  it('does not derive automationDetails.id from the scanned sites (the upload category identifies the analysis)', async () => {
+    const dir = await tempDir('sarif-auto-');
+    const configPath = join(dir, 'thirdsentry.yml');
+    await writeFile(configPath, 'version: 1\nsites:\n  - name: shop\n    url: https://shop.example\n');
+    const { report } = sampleReport();
+    const sarif = (await buildSarif(report, { configPath, baseDir: dir })) as { runs: Array<Record<string, unknown>> };
+    expect(sarif.runs[0]?.automationDetails).toBeUndefined();
+  });
+
+  it('makes the config path relative to the repository root, not the config directory', async () => {
+    const repo = await tempDir('sarif-repo-');
+    await mkdir(join(repo, '.git'));
+    await mkdir(join(repo, 'monitoring'));
+    const configPath = join(repo, 'monitoring', 'thirdsentry.yml');
+    await writeFile(configPath, 'version: 1\nsites:\n  - name: shop\n    url: https://shop.example\n');
+    const { report } = sampleReport();
+    type Sarif = { runs: Array<{ results: Array<{ locations: Array<{ physicalLocation: { artifactLocation: { uri: string } } }> }> }> };
+    const uri = (s: Sarif): string | undefined => s.runs[0]?.results[0]?.locations[0]?.physicalLocation.artifactLocation.uri;
+    expect(uri((await buildSarif(report, { configPath, env: {} })) as Sarif)).toBe('monitoring/thirdsentry.yml');
+    expect(sarifBaseDir(configPath, {})).toBe(repo);
+    // GITHUB_WORKSPACE wins when it contains the config.
+    expect(uri((await buildSarif(report, { configPath, env: { GITHUB_WORKSPACE: join(repo, 'monitoring', '..') } })) as Sarif)).toBe('monitoring/thirdsentry.yml');
+    const nested = join(repo, 'monitoring');
+    expect(uri((await buildSarif(report, { configPath, env: { GITHUB_WORKSPACE: nested } })) as Sarif)).toBe('thirdsentry.yml');
+  });
+
+  it('generates a generic rule for finding kinds it does not know', async () => {
+    const dir = await tempDir('sarif-kind-');
+    const configPath = join(dir, 'thirdsentry.yml');
+    await writeFile(configPath, 'version: 1\nsites:\n  - name: shop\n    url: https://shop.example\n');
+    const { report } = sampleReport();
+    const odd = { id: 'TS-00000000beef', kind: 'coverage-degraded', title: 'Coverage degraded', site: 'shop', severity: 'medium', detectedAt: 'x', reason: 'Fewer pages loaded.' } as unknown as Finding;
+    const sarif = (await buildSarif({ ...report, findings: [...report.findings, odd] }, { configPath, baseDir: dir })) as {
+      runs: Array<{ tool: { driver: { rules: Array<{ id: string; shortDescription: { text: string } }> } }; results: Array<{ ruleId: string; ruleIndex: number; level: string }> }>;
+    };
+    const run = sarif.runs[0];
+    const rule = run?.tool.driver.rules.find((r) => r.id === 'thirdsentry/coverage-degraded');
+    expect(rule?.shortDescription.text).toMatch(/coverage-degraded/);
+    const result = run?.results.find((r) => r.ruleId === 'thirdsentry/coverage-degraded');
+    expect(run?.tool.driver.rules[result?.ruleIndex ?? -1]?.id).toBe('thirdsentry/coverage-degraded');
+    expect(result?.level).toBe('warning');
+    // The HTML report renders it too.
+    expect(renderHtmlReport({ ...report, findings: [odd] }, undefined)).toContain('Coverage degraded');
   });
 });

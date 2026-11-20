@@ -14,20 +14,33 @@ interface AlertOptions {
   report?: string;
   channel?: string;
   dryRun?: boolean;
+  test?: boolean;
 }
 
+const NO_CHANNEL = 'no alert channel is enabled (set alerts.<slack|webhook|github|email>.enabled: true in thirdsentry.yml)';
+
 export function printAlertResult(result: AlertRunResult): void {
+  const label = result.test ? 'Test alert' : 'Alert';
+  if (result.channels.length === 0) {
+    print(color.gray(`${result.dryRun ? 'Dry run: ' : 'Alerts: '}${NO_CHANNEL}.`));
+    return;
+  }
   if (result.dryRun) {
-    print(`Dry run: ${result.selected} finding(s) would be sent.`);
+    if (result.results.length === 0) {
+      print(`Dry run: nothing new to send through ${result.channels.join(', ')}.`);
+      return;
+    }
+    print(`Dry run: ${result.selected} finding(s) selected.`);
+    for (const r of result.results) print(`  ${r.channel}: ${r.detail ?? `${r.selected} finding(s) would be sent`}`);
     return;
   }
   if (result.results.length === 0) {
-    print(color.gray(result.selected === 0 ? 'Alerts: nothing new to send.' : 'Alerts: no channel enabled.'));
+    print(color.gray('Alerts: nothing new to send.'));
     return;
   }
   for (const r of result.results) {
-    if (r.ok) print(color.green(`Alert via ${r.channel}: ${r.delivered} finding(s)${r.detail ? ` (${r.detail})` : ''}`));
-    else print(color.red(`Alert via ${r.channel} failed after ${r.attempts} attempt(s): ${r.error ?? 'unknown error'}`));
+    if (r.ok) print(color.green(`${label} via ${r.channel}: ${r.delivered} finding(s)${r.detail ? ` (${r.detail})` : ''}`));
+    else print(color.red(`${label} via ${r.channel} failed after ${r.attempts} attempt(s)${r.delivered ? ` (${r.delivered} delivered)` : ''}: ${r.error ?? 'unknown error'}`));
   }
 }
 
@@ -47,16 +60,23 @@ export function registerAlert(program: Command): void {
     .option('--report <file>', 'report.json to alert on (default: .thirdsentry/reports/report.json)')
     .option('--channel <names>', `only these channels (${CHANNELS.join(', ')})`)
     .option('--dry-run', 'show what would be sent without sending')
+    .option('--test', 'send a clearly-labelled test alert through each enabled channel (no report needed; alert state is not changed)')
     .action(async (opts: AlertOptions, command: Command) => {
       const g = globalOptions(command);
       const resolved = await loadConfig({ ...(g.config ? { configPath: g.config } : {}) });
       const channels = opts.channel?.split(',').map((c) => c.trim()).filter(Boolean);
       const unknown = channels?.filter((c) => !(CHANNELS as readonly string[]).includes(c)) ?? [];
       if (unknown.length) throw new ConfigError(`Unknown alert channel(s): ${unknown.join(', ')}`, `Use: ${CHANNELS.join(', ')}`);
-      const report = await loadReport(opts.report ? resolve(opts.report) : reportJsonPath(resolved));
-      const result = await sendAlerts(resolved, report, { ...(channels ? { channels: channels as ChannelName[] } : {}), ...(opts.dryRun ? { dryRun: true } : {}) });
+      const report = opts.test ? undefined : await loadReport(opts.report ? resolve(opts.report) : reportJsonPath(resolved));
+      const result = await sendAlerts(resolved, report, {
+        ...(channels ? { channels: channels as ChannelName[] } : {}),
+        ...(opts.dryRun ? { dryRun: true } : {}),
+        ...(opts.test ? { test: true } : {}),
+      });
       if (g.json) printJson(result);
       else printAlertResult(result);
       if (result.results.some((r) => !r.ok)) process.exitCode = ExitCode.InternalError;
+      // A test with nothing to test is a failed check.
+      else if (opts.test && result.channels.length === 0) process.exitCode = ExitCode.ConfigError;
     });
 }
