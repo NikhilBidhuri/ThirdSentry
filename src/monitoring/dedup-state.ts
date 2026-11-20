@@ -27,7 +27,14 @@ import { getLogger } from '../utils/logger.js';
  *    them), so upgrading never re-sends old alerts.
  */
 
-const AlertMarkSchema = z.object({ at: z.string(), severity: z.string() });
+const AlertMarkSchema = z.object({
+  at: z.string(),
+  severity: z.string(),
+  /** Site the finding belongs to (recorded for channels with auto-resolve). */
+  site: z.string().optional(),
+  /** Set when the channel's event for this finding was resolved (PagerDuty autoResolve). */
+  resolvedAt: z.string().optional(),
+});
 
 const EntrySchema = z.object({
   firstSeen: z.string(),
@@ -165,11 +172,32 @@ export function lastAlert(entry: FindingStateEntry | undefined, channel: Channel
 }
 
 /** Record that `ids` were delivered through `channel`. Other channels are unaffected. */
-export function recordAlerted(state: FindingState, channel: ChannelName, ids: readonly string[], severityOf: (id: string) => Severity | undefined, now: Date = new Date()): void {
+export function recordAlerted(state: FindingState, channel: ChannelName, ids: readonly string[], severityOf: (id: string) => Severity | undefined, now: Date = new Date(), siteOf?: (id: string) => string | undefined): void {
   const at = now.toISOString();
   for (const id of ids) {
     const severity = severityOf(id) ?? 'info';
     const entry = state.findings[id] ?? { firstSeen: at, lastSeen: at, timesSeen: 1, severity };
-    state.findings[id] = { ...entry, alerts: { ...(entry.alerts ?? {}), [channel]: { at, severity } } };
+    const site = siteOf?.(id);
+    state.findings[id] = { ...entry, alerts: { ...(entry.alerts ?? {}), [channel]: { at, severity, ...(site ? { site } : {}) } } };
+  }
+}
+
+/** IDs with an open (delivered and not yet resolved) mark on `channel`, with the site recorded at delivery. */
+export function openAlerts(state: FindingState, channel: ChannelName): Array<{ id: string; site: string | undefined }> {
+  const open: Array<{ id: string; site: string | undefined }> = [];
+  for (const [id, entry] of Object.entries(state.findings)) {
+    const mark = entry.alerts?.[channel];
+    if (mark && !mark.resolvedAt) open.push({ id, site: mark.site });
+  }
+  return open;
+}
+
+/** Record that the channel's event for `ids` was resolved. A later re-delivery clears the resolved flag. */
+export function recordResolved(state: FindingState, channel: ChannelName, ids: readonly string[], now: Date = new Date()): void {
+  const at = now.toISOString();
+  for (const id of ids) {
+    const entry = state.findings[id];
+    const mark = entry?.alerts?.[channel];
+    if (entry && mark) state.findings[id] = { ...entry, alerts: { ...entry.alerts, [channel]: { ...mark, resolvedAt: at } } };
   }
 }

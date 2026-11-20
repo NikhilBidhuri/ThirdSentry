@@ -1,6 +1,6 @@
 # Alerts
 
-ThirdSentry can notify you about new findings through **Slack**, a **generic HTTP webhook**, **GitHub Issues** and **e-mail**. Alerts are sent after a scan (`thirdsentry scan`) or on demand (`thirdsentry alert`).
+ThirdSentry can notify you about new findings through **Slack**, **Microsoft Teams**, **PagerDuty**, a **generic HTTP webhook**, **GitHub Issues** and **e-mail**. Alerts are sent after a scan (`thirdsentry scan`) or on demand (`thirdsentry alert`).
 
 ## Principles
 
@@ -51,6 +51,19 @@ alerts:
     password: ${THIRDSENTRY_SMTP_PASS}
     from: ${THIRDSENTRY_SMTP_FROM}
     to: ${THIRDSENTRY_SMTP_TO}             # comma separated, or a YAML list
+
+  pagerduty:
+    enabled: false
+    routingKey: ${THIRDSENTRY_PAGERDUTY_ROUTING_KEY}
+    minSeverity: high        # default for this channel (paging is for urgent findings)
+    apiUrl: https://events.pagerduty.com/v2/enqueue   # EU: https://events.eu.pagerduty.com/v2/enqueue
+    autoResolve: false       # send "resolve" when a finding is gone (see below)
+    maxEventsPerRun: 20      # events per run; the rest stays pending
+
+  teams:
+    enabled: false
+    webhookUrl: ${THIRDSENTRY_TEAMS_WEBHOOK}   # Workflows (Power Automate) webhook URL
+    minSeverity: medium      # optional per-channel threshold
 ```
 
 ### Environment variables
@@ -64,6 +77,8 @@ alerts:
 | `GITHUB_REPOSITORY` | GitHub Issues | `github.enabled`; `owner/repo` |
 | `THIRDSENTRY_SMTP_HOST`, `_PORT`, `_FROM`, `_TO` | E-mail | `email.enabled` |
 | `THIRDSENTRY_SMTP_USER`, `_PASS` | E-mail | your server requires authentication |
+| `THIRDSENTRY_TEAMS_WEBHOOK` | Teams | `teams.enabled` (default reference) |
+| `THIRDSENTRY_PAGERDUTY_ROUTING_KEY` | PagerDuty | `pagerduty.enabled` (default reference) |
 | `THIRDSENTRY_REPORT_URL` | all | you reference it in `reportUrl` |
 
 The names are only defaults: any `${NAME}` works. A referenced variable that is not set makes that channel fail with a clear message; other channels still run.
@@ -116,13 +131,89 @@ permissions:
 
 `to` may be a list or a comma-separated string; display names containing commas are supported (`"Doe, John" <j@example.com>`). Sends through your SMTP server using nodemailer (file and URL access in message content are disabled). By default `requireTLS: true`: if the server does not offer STARTTLS, nothing is sent rather than sending credentials in clear text. Use `secure: true` for implicit TLS on port 465.
 
+### Microsoft Teams
+
+The Office 365 connectors (`outlook.office.com` incoming webhooks) are retired; ThirdSentry uses a **Workflows (Power Automate)** webhook instead.
+
+Setup: in Teams open the channel, choose **Workflows**, pick the template **Post to a channel when a webhook request is received**, finish the wizard and copy the generated HTTP POST URL into `THIRDSENTRY_TEAMS_WEBHOOK`. Treat the URL as a secret (it contains a signature). Only `https://` URLs are accepted (`allowInsecureHttp: true` exists for local test receivers).
+
+The request body is a message with an Adaptive Card (version 1.4) attachment:
+
+```json
+{
+  "type": "message",
+  "attachments": [{
+    "contentType": "application/vnd.microsoft.card.adaptive",
+    "contentUrl": null,
+    "content": {
+      "type": "AdaptiveCard", "version": "1.4", "msteams": { "width": "Full" },
+      "body": [
+        { "type": "TextBlock", "text": "ThirdSentry: 2 finding(s) on shop", "size": "Large", "weight": "Bolder", "wrap": true },
+        { "type": "TextBlock", "text": "Changes need attention", "wrap": true },
+        { "type": "TextBlock", "text": "By severity: high 1, medium 1", "isSubtle": true, "wrap": true },
+        { "type": "Container", "style": "emphasis", "items": [ "...severity + title, resource, reason, Why, Next, Finding ID..." ] }
+      ],
+      "actions": [{ "type": "Action.OpenUrl", "title": "Open report", "url": "https://ci.example/run/42" }]
+    }
+  }]
+}
+```
+
+The header shows the headline and counts by severity; every finding is one compact container. The "Open report" action appears only when `alerts.reportUrl` is an http(s) URL; otherwise the local report path is shown as text.
+
+Limits: Teams rejects payloads above about 28 KB. ThirdSentry measures the serialized size, keeps it under 24 KB and renders only as many findings as fit; the card says "N more finding(s) - see report". Only rendered findings count as delivered; the rest stay pending for Teams (same rule as Slack). A Workflows flow may answer `202` before the post is processed, so a successful HTTP status means the flow accepted the request, not that the message appeared.
+
+Finding text is neutralised before it goes into the card (TextBlocks render a markdown subset): markdown punctuation is backslash-escaped, `<`/`>` are replaced so no tags or `<at>` mentions are possible, `@` is broken up, and `://` and `www.` get a zero-width space so URLs are not turned into clickable links. Clients can still auto-link a bare domain; this is best effort.
+
+### PagerDuty
+
+Uses the [Events API v2](https://developer.pagerduty.com/docs/events-api-v2-overview). Setup: in PagerDuty open the target service, **Integrations**, add **Events API V2**, copy the *Integration Key* into `THIRDSENTRY_PAGERDUTY_ROUTING_KEY`. For an EU account set `apiUrl: https://events.eu.pagerduty.com/v2/enqueue`.
+
+One `trigger` event is sent per finding:
+
+```json
+{
+  "routing_key": "<integration key>",
+  "event_action": "trigger",
+  "dedup_key": "thirdsentry:TS-1a2b3c4d5e6f",
+  "payload": {
+    "summary": "HIGH: Script changed (https://cdn.vendor.example/s.js) on shop: The content of the script changed.",
+    "source": "shop",
+    "severity": "error",
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "component": "cdn.vendor.example",
+    "group": "shop",
+    "class": "review",
+    "custom_details": { "finding_id": "TS-1a2b3c4d5e6f", "confidence": "high", "pages": ["/"], "resource_url": "...", "previous_hash": "...", "current_hash": "...", "reason": "...", "why": "...", "next_step": "...", "scan_id": "...", "report": "..." }
+  },
+  "client": "ThirdSentry",
+  "client_url": "https://ci.example/run/42",
+  "links": [{ "href": "https://ci.example/run/42", "text": "ThirdSentry report" }]
+}
+```
+
+`dedup_key` is derived from the finding ID (a content fingerprint), so PagerDuty itself de-duplicates re-sends of the same finding. `custom_details` is compact: no script bodies, no evidence excerpts. `summary` is capped at 1,024 characters. `links` and `client_url` are present only when the report location is an http(s) URL.
+
+| ThirdSentry severity | PagerDuty severity |
+| --- | --- |
+| critical | `critical` |
+| high | `error` |
+| medium | `warning` |
+| low, info | `info` |
+
+Rate limits and errors: HTTP 429 and 5xx are retried with exponential backoff (`alerts.retries`). HTTP 400 (invalid event or routing key) is not retried; the error message from PagerDuty is shown with the routing key redacted. A 400 affects only that event: the other events of the run are still sent, and the rejected finding stays pending. Any other failure (retries exhausted, 401/403) stops the run, and the remaining findings stay pending. At most `maxEventsPerRun` (default 20) events are sent per run; the rest stay pending and are sent by the next runs, never dropped.
+
+**autoResolve** (off by default). When enabled, ThirdSentry remembers which findings it triggered in PagerDuty (in the per-channel state, together with the site) and sends a `resolve` event with the same `dedup_key` when such a finding is no longer in the report (fixed, baseline approved, or suppressed). To avoid resolving because of a bad scan it only acts when the whole scan is `complete` and the finding's site is `complete`; a partial or failed scan never resolves anything. The report records completeness per site, not per page, so this is the granularity used. Resolves are capped by `maxEventsPerRun` too, and a failed resolve is retried next run. If a resolved finding reappears, it is triggered again. Findings alerted before upgrading have no recorded site and are never auto-resolved.
+
+`alert --test` sends a trigger with severity `info` labelled TEST and resolves it immediately, so no incident is left open.
+
 ## Commands
 
 ```bash
 npx thirdsentry scan                 # scans, writes reports, then alerts (unless --no-alerts)
 npx thirdsentry alert                # alerts for .thirdsentry/reports/report.json
 npx thirdsentry alert --dry-run      # show what would be sent
-npx thirdsentry alert --channel slack,github
+npx thirdsentry alert --channel slack,github,teams,pagerduty
 ```
 
 `alert --json` prints per-channel results. With no channel enabled, `alert` (and `--dry-run`) says so instead of reporting zero findings.
@@ -139,10 +230,10 @@ Only transient delivery errors (network failures, timeouts, HTTP 429/5xx, SMTP 4
 
 ### Alert state
 
-`.thirdsentry/state/findings.json` (version 2) records per finding and per channel when and at which severity it was delivered. Version 1 files are migrated on load: a finding alerted before counts as delivered to every channel, so upgrading does not re-send old alerts.
+`.thirdsentry/state/findings.json` (version 2) records per finding and per channel when and at which severity it was delivered (for PagerDuty also the site and whether the event was resolved). Version 1 files are migrated on load: a finding alerted before counts as delivered to every channel, so upgrading does not re-send old alerts.
 
 If the file cannot be parsed, it is not silently reset: it is moved to `findings.json.corrupt-<timestamp>`, an error is logged, and a new state is started. Because history is lost, findings are reported as new; the flood is bounded (one message per channel, at most `maxFindingsPerAlert` findings each, GitHub issues de-duplicated by marker and capped by `maxIssuesPerRun`) and the first alert on each channel states that the history was reset and where the backup is. I/O errors (permissions, locks) fail the run instead of resetting state.
 
 ## Testing status
 
-The Slack, webhook, GitHub and e-mail integrations are covered by automated tests against **local mock servers** (an HTTP receiver and a minimal SMTP server) that check payloads, signatures, retries, de-duplication and secret redaction. They have **not** been tested against the live Slack, GitHub or a production SMTP service in this repository's test suite. Verify your own setup with `thirdsentry alert --dry-run` followed by a real run against a test channel.
+The Slack, Teams, PagerDuty, webhook, GitHub and e-mail integrations are covered by automated tests against **local mock servers** (an HTTP receiver and a minimal SMTP server) that check payloads, signatures, retries, de-duplication and secret redaction. The Teams and PagerDuty channels were tested **only against local mock servers**: payload shape, size capping, retries, redaction, per-channel state and auto-resolve are verified, but cards and events have not been sent to a live Teams workflow or PagerDuty service, so rendering in Teams and acceptance of every field by PagerDuty are unverified. They have **not** been tested against the live Slack, GitHub or a production SMTP service in this repository's test suite. Verify your own setup with `thirdsentry alert --dry-run` followed by a real run against a test channel.

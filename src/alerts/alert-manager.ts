@@ -1,6 +1,6 @@
 import type { ResolvedConfig } from '../config/loader.js';
 import type { AlertsConfig, Severity } from '../config/schema.js';
-import { loadFindingState, recordAlerted, saveFindingState, type FindingState } from '../monitoring/dedup-state.js';
+import { loadFindingState, openAlerts, recordAlerted, recordResolved, saveFindingState, type FindingState } from '../monitoring/dedup-state.js';
 import type { Finding } from '../types/findings.js';
 import type { AnalysisReport } from '../types/report.js';
 import { ThirdSentryError } from '../utils/errors.js';
@@ -11,7 +11,9 @@ import { parseRecipients, sendEmail } from './email.js';
 import { isLiteralSecret, redactSecrets, resolveEnv } from './env.js';
 import { createGithubIssues } from './github-issues.js';
 import { AlertDeliveryError, type FetchLike } from './http.js';
+import { sendPagerDuty } from './pagerduty.js';
 import { sendSlack } from './slack.js';
+import { sendTeams } from './teams.js';
 import { sendWebhook } from './webhook.js';
 
 /**
@@ -107,6 +109,8 @@ export function literalSecretWarnings(alerts: AlertsConfig): string[] {
   if (alerts.webhook.enabled && isLiteralSecret(alerts.webhook.secret)) warnings.push('alerts.webhook.secret');
   if (alerts.github.enabled && isLiteralSecret(alerts.github.token)) warnings.push('alerts.github.token');
   if (alerts.email.enabled && isLiteralSecret(alerts.email.password)) warnings.push('alerts.email.password');
+  if (alerts.pagerduty.enabled && isLiteralSecret(alerts.pagerduty.routingKey)) warnings.push('alerts.pagerduty.routingKey');
+  if (alerts.teams.enabled && isLiteralSecret(alerts.teams.webhookUrl)) warnings.push('alerts.teams.webhookUrl');
   return warnings;
 }
 
@@ -159,7 +163,9 @@ interface Delivery {
   /** Finding IDs delivered (see the module comment). */
   readonly ids: readonly string[];
   readonly detail?: string;
-  /** A failure after part of the work was done (GitHub). */
+  /** Findings whose open event was resolved (PagerDuty autoResolve). */
+  readonly resolved?: readonly string[];
+  /** A failure after part of the work was done (GitHub, PagerDuty). */
   readonly error?: Error;
 }
 
@@ -169,6 +175,8 @@ interface ChannelContext {
   readonly now: Date;
   readonly fetchImpl?: FetchLike;
   readonly retryDelayMs: number;
+  /** Finding IDs whose PagerDuty event should be resolved in this run (autoResolve). */
+  readonly resolveIds?: readonly string[];
 }
 
 async function deliver(channel: ChannelName, payload: AlertPayload, ctx: ChannelContext, secrets: string[]): Promise<{ delivery: Delivery; attempts: number }> {
@@ -208,6 +216,34 @@ async function deliver(channel: ChannelName, payload: AlertPayload, ctx: Channel
       const detail = `${outcome.created.length} issue(s) created, ${outcome.existing.length} already open${outcome.skipped.length ? `, ${outcome.skipped.length} pending (maxIssuesPerRun or failure)` : ''}`;
       return { delivery: { ids: [...outcome.created, ...outcome.existing], detail, ...(outcome.error ? { error: outcome.error } : {}) }, attempts: 1 };
     }
+    case 'teams': {
+      const target = { webhookUrl: resolve(alerts.teams.webhookUrl, 'alerts.teams.webhookUrl'), allowInsecureHttp: alerts.teams.allowInsecureHttp };
+      // The signature lives in the URL's path/query; an endpoint may echo just that part.
+      try {
+        const u = new URL(target.webhookUrl);
+        secrets.push(u.pathname, u.search, ...u.searchParams.values());
+      } catch {
+        // An invalid URL is reported by sendTeams.
+      }
+      const { value, attempts } = await withRetries(() => sendTeams(payload, target, common), alerts.retries, ctx.retryDelayMs);
+      return { delivery: { ids: value }, attempts };
+    }
+    case 'pagerduty': {
+      const pd = alerts.pagerduty;
+      const target = { routingKey: resolve(pd.routingKey, 'alerts.pagerduty.routingKey'), apiUrl: resolve(pd.apiUrl, 'alerts.pagerduty.apiUrl'), allowInsecureHttp: pd.allowInsecureHttp, maxEventsPerRun: pd.maxEventsPerRun };
+      let attempts = 0;
+      const retry = async <T>(fn: () => Promise<T>): Promise<T> => {
+        const r = await withRetries(fn, alerts.retries, ctx.retryDelayMs).catch((e: unknown) => {
+          attempts += (e as { attempts?: number }).attempts ?? 1;
+          throw e;
+        });
+        attempts += r.attempts;
+        return r.value;
+      };
+      const outcome = await sendPagerDuty(payload, target, ctx.resolveIds ?? [], common, retry);
+      const detail = outcome.resolved.length ? `${outcome.resolved.length} resolved` : undefined;
+      return { delivery: { ids: outcome.triggered, resolved: outcome.resolved, ...(detail ? { detail } : {}), ...(outcome.error ? { error: outcome.error } : {}) }, attempts: Math.max(attempts, 1) };
+    }
     case 'email': {
       const port = typeof alerts.email.port === 'number' ? alerts.email.port : Number(resolve(alerts.email.port, 'alerts.email.port'));
       const to = parseRecipients((Array.isArray(alerts.email.to) ? alerts.email.to : [alerts.email.to]).map((t, i) => resolve(t, `alerts.email.to[${i}]`)));
@@ -233,7 +269,7 @@ function errorText(error: unknown, secrets: readonly string[]): string {
 }
 
 /** Send one payload through one channel; never throws. */
-async function runChannel(channel: ChannelName, payload: AlertPayload, ctx: ChannelContext, selected: number): Promise<{ result: ChannelResult; ids: readonly string[] }> {
+async function runChannel(channel: ChannelName, payload: AlertPayload, ctx: ChannelContext, selected: number): Promise<{ result: ChannelResult; ids: readonly string[]; resolved: readonly string[] }> {
   const log = getLogger('alerts');
   const secrets: string[] = [];
   try {
@@ -244,16 +280,33 @@ async function runChannel(channel: ChannelName, payload: AlertPayload, ctx: Chan
     if (delivery.error) {
       const message = errorText(delivery.error, secrets);
       log.error({ channel, delivered: delivery.ids.length, pending, err: message }, 'alert delivery partly failed (scan results are unaffected)');
-      return { result: { channel, ok: false, delivered: delivery.ids.length, selected, pending, attempts, ...(detail ? { detail } : {}), error: message }, ids: delivery.ids };
+      return { result: { channel, ok: false, delivered: delivery.ids.length, selected, pending, attempts, ...(detail ? { detail } : {}), error: message }, ids: delivery.ids, resolved: delivery.resolved ?? [] };
     }
     log.info({ channel, findings: delivery.ids.length, pending }, payload.test ? 'test alert delivered' : 'alert delivered');
-    return { result: { channel, ok: true, delivered: delivery.ids.length, selected, pending, attempts, ...(detail ? { detail } : {}) }, ids: delivery.ids };
+    return { result: { channel, ok: true, delivered: delivery.ids.length, selected, pending, attempts, ...(detail ? { detail } : {}) }, ids: delivery.ids, resolved: delivery.resolved ?? [] };
   } catch (error) {
     const message = errorText(error, secrets);
     const attempts = (error as { attempts?: number }).attempts ?? 1;
     log.error({ channel, attempts, err: message }, 'alert delivery failed (scan results are unaffected)');
-    return { result: { channel, ok: false, delivered: 0, selected, pending: selected, attempts, error: message }, ids: [] };
+    return { result: { channel, ok: false, delivered: 0, selected, pending: selected, attempts, error: message }, ids: [], resolved: [] };
   }
+}
+
+/**
+ * PagerDuty autoResolve: findings with an open PagerDuty event that are no
+ * longer in the report. Only a COMPLETE scan counts, and only for sites whose
+ * own status is complete (the report carries completeness per site, not per
+ * page); a partial or failed scan never resolves anything. Suppressed
+ * findings count as gone. Marks without a recorded site (older state) are
+ * never auto-resolved.
+ */
+export function findingsToResolve(alerts: AlertsConfig, report: AnalysisReport, state: FindingState): string[] {
+  if (!alerts.pagerduty.enabled || !alerts.pagerduty.autoResolve || report.scanStatus !== 'complete') return [];
+  const present = new Set(report.findings.filter((f) => !f.suppressed).map((f) => f.id));
+  const complete = new Set(report.sites.filter((s) => s.status === 'complete').map((s) => s.name));
+  return openAlerts(state, 'pagerduty')
+    .filter((o) => o.site !== undefined && complete.has(o.site) && !present.has(o.id))
+    .map((o) => o.id);
 }
 
 function recoveryNotice(state: FindingState): string | undefined {
@@ -293,38 +346,47 @@ export async function sendAlerts(resolved: ResolvedConfig, report: AnalysisRepor
     const minSeverity = alerts[channel].minSeverity ?? alerts.minSeverity;
     perChannel.set(channel, selectFindingsForAlert(report, state, { minSeverity, repeatAfterHours: alerts.repeatAfterHours }, now, channel));
   }
+  const resolveIds = channels.includes('pagerduty') ? findingsToResolve(alerts, report, state) : [];
   const union = report.findings.filter((f) => [...perChannel.values()].some((list) => list.includes(f)));
-  if (union.length === 0) {
+  if (union.length === 0 && resolveIds.length === 0) {
     log.info('no new findings at or above the alert thresholds; nothing to send');
     return { ...base, selected: 0, results: [] };
   }
   const notice = recoveryNotice(state);
   const notified = new Set(state.recovery?.notified ?? []);
   const payloadFor = (findings: readonly Finding[], channel?: ChannelName): AlertPayload =>
-    buildAlertPayload(report, findings, { maxFindings: alerts.maxFindingsPerAlert, reportLocation, now, ...(notice && !(channel && notified.has(channel)) ? { notice } : {}) });
+    buildAlertPayload(report, findings, { maxFindings: channel === 'pagerduty' ? alerts.pagerduty.maxEventsPerRun : alerts.maxFindingsPerAlert, reportLocation, now, ...(notice && !(channel && notified.has(channel)) ? { notice } : {}) });
   const overall = payloadFor(union);
 
   const results: ChannelResult[] = [];
   if (dryRun) {
     for (const channel of channels) {
       const n = perChannel.get(channel)?.length ?? 0;
-      results.push({ channel, ok: true, delivered: 0, selected: n, pending: n, attempts: 0, detail: n ? `${n} finding(s) would be sent` : 'nothing new for this channel' });
+      const r = channel === 'pagerduty' ? resolveIds.length : 0;
+      const detail = [n ? `${n} finding(s) would be sent` : 'nothing new for this channel', r ? `${r} would be resolved` : undefined].filter(Boolean).join('; ');
+      results.push({ channel, ok: true, delivered: 0, selected: n, pending: n, attempts: 0, detail });
     }
     return { ...base, selected: union.length, results, payload: overall };
   }
 
   const severityOf = (id: string): Severity | undefined => report.findings.find((f) => f.id === id)?.severity;
+  const siteOf = (id: string): string | undefined => report.findings.find((f) => f.id === id)?.site;
   let changed = false;
   for (const channel of channels) {
     const selected = perChannel.get(channel) ?? [];
-    if (selected.length === 0) {
+    const resolving = channel === 'pagerduty' ? resolveIds : [];
+    if (selected.length === 0 && resolving.length === 0) {
       results.push({ channel, ok: true, delivered: 0, selected: 0, pending: 0, attempts: 0, detail: 'nothing new for this channel' });
       continue;
     }
-    const { result, ids } = await runChannel(channel, payloadFor(selected, channel), ctx, selected.length);
+    const { result, ids, resolved } = await runChannel(channel, payloadFor(selected, channel), { ...ctx, ...(resolving.length ? { resolveIds: resolving } : {}) }, selected.length);
     results.push(result);
     if (ids.length > 0) {
-      recordAlerted(state, channel, ids, severityOf, now);
+      recordAlerted(state, channel, ids, severityOf, now, siteOf);
+      changed = true;
+    }
+    if (resolved.length > 0) {
+      recordResolved(state, channel, resolved, now);
       changed = true;
     }
     if (state.recovery && result.ok && !notified.has(channel)) {
