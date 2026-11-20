@@ -30,6 +30,7 @@ Rule matches on unchanged, approved scripts never produce findings. They are vis
 | `TS-WEBSOCKET` | WebSocket connection | low | high | 6 |
 | `TS-REMOTE-ENDPOINT` | Sends requests to absolute URLs | info | medium | 2 |
 | `TS-NETWORK-API-HOOK` | Overrides network or form APIs | medium | high | 12 |
+| `TS-SOURCE-REFLECTION` | Reads its own source code | info | medium | 2 |
 | `TS-OBFUSCATION` | Obfuscated or heavily encoded code | medium | medium | 12 |
 | `TS-EXFIL-COMBINATION` | Sensitive data access combined with data transmission | high | medium | 22 |
 
@@ -174,7 +175,10 @@ The same script both reads sensitive input (form fields, keystrokes, clipboard) 
 
 - Code that is built and executed at runtime (`eval`, `new Function`, code fetched from a server) is only visible as the call that executes it, which is why the dynamic-code rules exist.
 - Property names computed at runtime (`window[atob('ZG9jdW1lbnQ=')]`) cannot be resolved statically. The obfuscation rule flags code that relies heavily on such tricks.
-- Simple aliases are resolved (`var d = document`, `(function (w, d) { ... })(window, document)`); arbitrary data flow is not tracked.
+- Simple aliases are resolved (`var d = document`, `var e = eval; e(p)`, `(function (w, d) { ... })(window, document)`); arbitrary data flow is not tracked.
+- Evasions that are recognised: optional calls and members (`eval?.(p)`, `document?.cookie`), tagged templates (``Function`x` ``, ``setTimeout`x` ``), constructor gadgets (`(function(){}).constructor(p)()`, `[]["filter"]["constructor"](p)()`), constant-folded computed names (`window['ev' + 'al']`, `document['coo' + 'kie']`, names held in a `const`), and hooking `fetch`, `XMLHttpRequest` or `sendBeacon` through assignment or `Object.defineProperty`.
+- Scripts are parsed the way the browser runs them: classic scripts with Annex B HTML-like comments (`<!--` and a line-leading `-->` start a comment), modules as modules, and resources of unknown type (code fetched by `fetch`/XHR) as classic script first. Parsing with the wrong goal would let a payload hide in what one side thinks is a comment.
+- Comment- and whitespace-only changes are normally "formatting only". If the script reads its own source (`TS-SOURCE-REFLECTION`) or runs strings as code (`TS-EVAL`, `TS-NEW-FUNCTION`, `TS-STRING-TIMER`), such a change is reported with the `formatting-with-reflection` signal and medium confidence instead.
 - Scripts larger than `analysis.maxScriptBytes` (default 3 MiB) are not analysed; their hashes are still compared.
 
 ## Configuring rules
@@ -237,6 +241,11 @@ HIGH confidence high  Third-party script changed on a sensitive page  TS-3f1c0a9
 | `moved-same-domain` | 3 | Approved code is now served from a different URL on the same domain |
 | `sri-mismatch` | 45 | The Subresource Integrity attribute does not match the served content (behavioural) |
 | `content-unavailable` | 10 | The script content could not be captured, so changes cannot be ruled out |
+| `analysis-unavailable` | 10 | The script could not be analysed (parse error or too large), so behaviour changes cannot be ruled out |
+| `analysis-regression` | 20 | The previous version could be analysed but this one cannot (obfuscation or unusual syntax is a common reason) (behavioural) |
+| `formatting-with-reflection` | 12 | Only formatting changed, but the script reads its own source or runs strings as code, where formatting is observable |
+| `page-failed` | 20 | The page could not be scanned, so none of its scripts were verified |
+| `coverage-degraded` | 15 | The page was only partly scanned (budget limit, timeout or dropped data), so changes may be hidden |
 | `resource-removed` | 4 | An approved resource no longer loads |
 | `new-outbound-domain-third-party` | 25 | The page now sends requests to a third-party domain never approved for this site |
 | `new-outbound-domain-first-party` | 8 | The page now sends requests to a new first-party domain |
@@ -298,6 +307,14 @@ suppressions:
 - Any other suppression (`id`, `kind`, `site`, `resource`, `domain`) marks the whole finding as **suppressed**. Suppressed findings stay in reports (marked as such) but do not trigger alerts or fail builds.
 - Expired suppressions stop applying and produce a warning.
 
+## Coverage findings
+
+A page that fails to scan, is scanned only partly (time budget, script/request limits, navigation timeout) or is in the baseline but was not scanned at all (page limit, unreachable site) produces a `page-failed` or `coverage-degraded` finding. Without it, every script change on that page would be invisible. On `sensitivePages` the `sensitive-page` signal is added, so these rate higher. The ID is derived from site, page, kind and the sorted list of reasons (issue codes), so the same ongoing problem alerts once; a different reason, or escalation from partial to failed, is a new finding.
+
+## Inline scripts
+
+Inline and blob scripts are matched per page and frame without relying on DOM position: an exact (or formatting-only) content match anywhere on the page means unchanged, and leftover new and removed scripts on the same page are paired by position and size and reported as one modified script. A body that was truncated at the capture limit can never match: it is reported as "content could not be verified".
+
 ## Repeated findings
 
-Finding IDs are fingerprints of the site, change kind, resource and current content hash. The same unchanged problem keeps the same ID across scans and is marked `recurring` after its first appearance (`new`). If the script changes again, the ID changes and the finding is `new` again. Alerts use this to avoid repeating themselves (see [alerts.md](alerts.md)). The state is kept in `.thirdsentry/state/findings.json`.
+Finding IDs are fingerprints of the site, change kind, resource, host (where the finding is about a specific host) and current content hash. The same unchanged problem keeps the same ID across scans and is marked `recurring` after its first appearance (`new`). If the script changes again, the ID changes and the finding is `new` again. Alerts use this to avoid repeating themselves (see [alerts.md](alerts.md)). The state is kept in `.thirdsentry/state/findings.json`.

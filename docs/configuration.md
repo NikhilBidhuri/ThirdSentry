@@ -89,7 +89,7 @@ retention:
 | `pages` | string[] | `["/"]` | Paths (starting with `/`) or absolute URLs to visit. Query strings are kept. |
 | `sensitivePages` | string[] | `[]` | Pages handling payments, logins or personal data. Findings there score higher. A trailing `*` matches a prefix (`/account/*`). |
 | `firstPartyDomains` | host patterns | `[]` | Extra domains you own. Resources there count as first-party. `*.example.com` matches subdomains. |
-| `ignoreQueryParams` | string[] | `[]` | Query parameter names removed from the *identity* of a resource (cache busters). The stored URL is never modified. |
+| `ignoreQueryParams` | string[] | `[cb, _, t, ts, timestamp, cachebust, cachebuster, nocache, rnd, rand, random]` | Query parameter names removed from the *identity* of a resource (cache busters), so `a.js?cb=123` is the same resource every scan. Setting the key replaces the default list (`[]` disables it; include the defaults you still want). Matching is case-sensitive. The stored URL is never modified. |
 | `browser.profile` | enum | from `defaults` | Browser profile (see below). |
 | `scan.*` | object | from `defaults` | Per-site overrides of the scan options below. |
 

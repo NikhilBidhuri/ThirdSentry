@@ -32,7 +32,9 @@ sites:
     # Extra domains you own (e.g. your CDN) that should count as first-party.
     firstPartyDomains: []
     # Query parameters that only bust caches and should not change resource identity.
-    ignoreQueryParams: []
+    # Omit to use the built-in list (cb, _, t, ts, timestamp, cachebust, cachebuster,
+    # nocache, rnd, rand, random); set a list to replace it, or [] to disable.
+    # ignoreQueryParams: [v, cb]
 
 limits:
   maxResourceBytes: 5242880   # largest script body captured and hashed (5 MiB)

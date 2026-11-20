@@ -1,5 +1,7 @@
 import { createTwoFilesPatch } from 'diff';
 import { normalizeJavaScript, normalizeLineEndings } from './normalizer.js';
+import { goalForResourceType } from './parser.js';
+import type { ResourceType } from '../types/index.js';
 
 /**
  * Human-readable code diff between two versions of a script.
@@ -23,11 +25,14 @@ export interface DiffOptions {
   readonly maxLines?: number;
   readonly oldLabel?: string;
   readonly newLabel?: string;
+  /** Resource type of the script, which decides classic-script vs module parsing. Unknown → classic script first. */
+  readonly resourceType?: ResourceType;
 }
 
 export function diffScripts(oldSource: string, newSource: string, options: DiffOptions = {}): CodeDiff {
-  const a = normalizeJavaScript(oldSource);
-  const b = normalizeJavaScript(newSource);
+  const goal = goalForResourceType(options.resourceType);
+  const a = normalizeJavaScript(oldSource, { goal });
+  const b = normalizeJavaScript(newSource, { goal });
   const useNormalized = a.normalized !== undefined && b.normalized !== undefined;
   const left = useNormalized ? (a.normalized) : normalizeLineEndings(oldSource);
   const right = useNormalized ? (b.normalized) : normalizeLineEndings(newSource);

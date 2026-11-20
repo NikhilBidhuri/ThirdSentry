@@ -41,7 +41,20 @@ export function ruleWeight(ruleId: string, rules: Readonly<Record<string, RuleCo
  */
 function behaviourSignals(c: Change, ctx: FindingContext): { signals: Signal[]; evidence: Evidence[] } {
   const current = c.current?.indicators;
-  if (!current?.analyzed) return { signals: [], evidence: [] };
+  // No indicators at all means analysis did not run (disabled); only a failed analysis is a signal.
+  if (!current) return { signals: [], evidence: [] };
+  if (!current.analyzed) {
+    // An unanalysable script must not look harmless: say so, and score it higher when
+    // the approved version could be analysed (the change made analysis impossible).
+    const r = c.current;
+    if (!r || !r.hashes.sha256 || r.type === 'wasm' || r.normalization.status === 'not-javascript') return { signals: [], evidence: [] };
+    const previouslyAnalysed = c.kind !== 'resource-added' && c.baseline?.indicators !== undefined;
+    const why = current.error ?? 'no analysis result';
+    return {
+      signals: [previouslyAnalysed ? signal('analysis-regression', ctx.risk) : signal('analysis-unavailable', ctx.risk)],
+      evidence: [{ label: 'Analysis unavailable', value: why.slice(0, 300) }],
+    };
+  }
   const previous = c.kind === 'resource-added' ? {} : c.baseline?.indicators;
   const signals: Signal[] = [];
   const evidence: Evidence[] = [];
@@ -91,6 +104,9 @@ function previousHashOf(c: Change): string | null {
   return hashes[hashes.length - 1]?.sha256 ?? null;
 }
 
+/** Rules for which whitespace/comments are observable at run time. */
+const REFLECTIVE_RULES = ['TS-SOURCE-REFLECTION', 'TS-EVAL', 'TS-NEW-FUNCTION', 'TS-STRING-TIMER'];
+
 const INVESTIGATE_SCRIPT =
   'Compare the new version with the previous one (thirdsentry diff), check the vendor\'s changelog or status page, and confirm the change with the vendor if it is unexpected. If it is legitimate, approve it with "thirdsentry baseline --approve <finding-id>".';
 
@@ -125,14 +141,19 @@ function template(c: Change, ctx: FindingContext, sensitive: boolean): Template 
         confidence: truncated ? 'medium' : 'high',
       };
     }
-    case 'resource-formatting-changed':
+    case 'resource-formatting-changed': {
+      const counts = r?.indicators?.counts ?? {};
+      const reflective = REFLECTIVE_RULES.some((id) => (counts[id] ?? 0) > 0);
       return {
         title: 'Script reformatted (code unchanged)',
-        reason: `The bytes of ${label} changed, but after parsing and normalising whitespace and comments the code is identical to an approved version.`,
+        reason: `The bytes of ${label} changed, but after parsing and normalising whitespace and comments the code is identical to an approved version.${reflective ? ' The script reads its own source text or runs strings as code, so even whitespace and comment changes can alter its behaviour: review it.' : ''}`,
         action: 'No action needed. Approve the new bytes to stop seeing this: thirdsentry baseline --approve <finding-id>.',
-        signals: [s('formatting-only')],
-        confidence: 'high',
+        signals: reflective
+          ? [s('formatting-only'), s('formatting-with-reflection')]
+          : [s('formatting-only')],
+        confidence: reflective ? 'medium' : 'high',
       };
+    }
     case 'resource-added': {
       const unexpected = c.details.unexpectedType !== undefined;
       signals.unshift(isInline(c) ? s('new-inline-script') : third ? s('new-third-party-script') : s('new-first-party-script'));
@@ -270,6 +291,19 @@ function template(c: Change, ctx: FindingContext, sensitive: boolean): Template 
         signals: [s('iframe-origin-removed')],
         confidence: 'medium',
       };
+    case 'page-failed':
+    case 'coverage-degraded': {
+      const failed = c.kind === 'page-failed';
+      signals.unshift(s(c.kind));
+      const page = c.pages[0] ?? 'a page';
+      return {
+        title: failed ? `Page could not be scanned${where}: ${page}` : `Scan coverage reduced${where}: ${page}`,
+        reason: `${failed ? `${page} failed to scan` : `${page} was only partly scanned`} (${c.details.reason ?? 'unknown'}). ${c.details.issues ?? ''} Changes to scripts on this page cannot be detected until it is scanned completely${sensitive ? ', and it is marked as sensitive' : ''}.`.replace(/\s+/g, ' '),
+        action: 'Check whether the page is reachable and whether limits.maxScanDurationMs, limits.maxPagesPerScan or the script/request limits need raising. Treat repeated failures on sensitive pages as an incident: an attacker can serve scanners an error page.',
+        signals,
+        confidence: 'high',
+      };
+    }
     default:
       return { title: c.kind, reason: c.kind, action: 'Review the change.', signals, confidence: 'medium' };
   }
@@ -323,8 +357,13 @@ export function buildFindings(changes: readonly Change[], ctx: FindingContext): 
     const a = assess(t.signals, t.confidence, risk);
     const r = c.current;
     const currentHash = r?.hashes.sha256 ?? null;
-    const subject = c.identity ?? c.domain ?? c.origin ?? c.host ?? '';
-    const id = fingerprint([ctx.site.name, c.kind, subject, c.kind === 'new-outbound-host' ? c.host : undefined, currentHash, c.details.currentFinalUrl]);
+    const coverage = c.kind === 'page-failed' || c.kind === 'coverage-degraded';
+    const subject = c.identity ?? c.domain ?? c.origin ?? c.host ?? (coverage ? c.pages[0] : undefined) ?? '';
+    // The host distinguishes findings that share a domain (a.evil.test vs b.evil.test). A
+    // new-outbound-domain finding is per domain (its host is just the first one seen), so it is excluded.
+    const hostPart = c.kind === 'new-outbound-domain' ? undefined : c.host;
+    // Extra parts are appended only for coverage kinds so the IDs of every other kind keep their old format.
+    const id = fingerprint([ctx.site.name, c.kind, subject, hostPart, currentHash, c.details.currentFinalUrl, ...(coverage ? [c.details.reason] : [])]);
     const resourceUrl = r?.finalUrl ?? r?.originalUrl ?? c.baseline?.finalUrl ?? c.baseline?.originalUrl;
     const domain = c.domain ?? r?.registrableDomain ?? c.baseline?.registrableDomain;
     const finding: Finding = {

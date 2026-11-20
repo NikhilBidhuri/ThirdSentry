@@ -3,6 +3,7 @@ import type { ScriptResource } from '../types/index.js';
 import { matchesAnyGlob } from '../utils/patterns.js';
 import { analyzeJavaScript } from './ast-analyzer.js';
 import { RULES } from './indicator-rules.js';
+import { goalForResourceType } from './parser.js';
 import type { Rule } from './rule-types.js';
 
 /**
@@ -47,10 +48,11 @@ export function analyzeResources(
     }
     const url = resource.finalUrl ?? resource.originalUrl ?? resource.identity;
     const applicable = rules.filter((r) => !matchesAnyGlob(url, config.rules[r.id]?.ignoreResources ?? []) && !matchesAnyGlob(resource.identity, config.rules[r.id]?.ignoreResources ?? []));
-    const cacheKey = `${sha}|${applicable.map((r) => r.id).join(',')}`;
+    const goal = goalForResourceType(resource.type);
+    const cacheKey = `${sha}|${goal}|${applicable.map((r) => r.id).join(',')}`;
     let result = cache.get(cacheKey);
     if (!result) {
-      result = analyzeJavaScript(body.toString('utf8'), { rules: applicable, maxBytes: config.analysis.maxScriptBytes });
+      result = analyzeJavaScript(body.toString('utf8'), { rules: applicable, maxBytes: config.analysis.maxScriptBytes, goal });
       cache.set(cacheKey, result);
     }
     resource.indicators = {
