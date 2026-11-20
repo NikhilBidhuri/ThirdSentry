@@ -56,6 +56,16 @@ describe('comparison engine', () => {
     expect(redirect?.details.crossHost).toBe('true');
   });
 
+  it('does not report a redirect when an ignored cache-buster changes and nothing redirected', () => {
+    // Same identity (cb is an ignored query parameter), no redirect in either scan: the
+    // final URL equals the requested URL, it just carries a different cache-buster.
+    const identity = 'url:http://analytics.example/a.js';
+    const approved = scriptResource('http://analytics.example/a.js?cb=1', 'pv()', { identity });
+    const current = scriptResource('http://analytics.example/a.js?cb=2', 'pv()', { identity });
+    const result = compareSite(site([current]), baselineOf([approved]));
+    expect(result.changes).toEqual([]);
+  });
+
   it('reports approved code served from a new domain as moved', () => {
     const base = baselineOf([scriptResource('https://cdn-a.example/lib.js', 'lib()')]);
     const result = compareSite(site([scriptResource('https://cdn-b.example/lib.js', 'lib()')]), base);

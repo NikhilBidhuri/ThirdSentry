@@ -53,6 +53,12 @@ function hostOf(url: string | undefined): string | undefined {
   }
 }
 
+/** Where a URL resource was redirected to, or undefined when it was served from the requested URL. */
+function redirectTarget(r: { readonly originalUrl?: string | undefined; readonly finalUrl?: string | undefined }): string | undefined {
+  if (!r.finalUrl || !r.originalUrl || r.finalUrl === r.originalUrl) return undefined;
+  return r.finalUrl;
+}
+
 function hashApproved(r: ScriptResource, b: BaselineResource): 'raw' | 'normalized' | false {
   if (r.hashes.sha256 !== null && b.approvedHashes.some((h) => h.sha256 === r.hashes.sha256)) return 'raw';
   if (
@@ -145,17 +151,20 @@ export function compareSite(site: SiteResult, baseline: Baseline, policy: Domain
     if (r.type !== b.type) {
       changes.push({ kind: 'resource-type-changed', identity: r.identity, current: r, baseline: b, pages: r.pages, details: { previousType: b.type, currentType: r.type } });
     }
-    const prevFinalHost = hostOf(b.finalUrl);
-    const currFinalHost = hostOf(r.finalUrl);
+    // A resource "redirects" only when the response URL differs from the requested URL.
+    // Comparing final URLs alone would report every request whose URL varies per load
+    // (e.g. an ignored cache-buster such as ?cb=<timestamp>) as a changed redirect.
+    const prevTarget = redirectTarget(b);
+    const currTarget = redirectTarget(r);
     // Only URL-identified resources have meaningful redirects (blob: URLs are random per load).
-    if (r.identity.startsWith('url:') && b.finalUrl && r.finalUrl && b.finalUrl !== r.finalUrl) {
+    if (r.identity.startsWith('url:') && prevTarget && currTarget && prevTarget !== currTarget) {
       changes.push({
         kind: 'redirect-changed',
         identity: r.identity,
         current: r,
         baseline: b,
         pages: r.pages,
-        details: { previousFinalUrl: b.finalUrl, currentFinalUrl: r.finalUrl, crossHost: String(prevFinalHost !== currFinalHost) },
+        details: { previousFinalUrl: prevTarget, currentFinalUrl: currTarget, crossHost: String(hostOf(prevTarget) !== hostOf(currTarget)) },
       });
     }
     if (match === 'raw' && verifiable(r)) {
