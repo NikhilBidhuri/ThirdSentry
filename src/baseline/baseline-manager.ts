@@ -1,6 +1,7 @@
 import { NORMALIZER_VERSION } from '../analysis/normalizer.js';
 import { baselinePath, type StoragePaths } from '../storage/paths.js';
-import type { ScriptResource, SiteResult } from '../types/index.js';
+import { observedPageSecurity, type PageSecurity, type PageSecurityPart } from '../pci/page-security.js';
+import type { PageResult, ScriptResource, SiteResult } from '../types/index.js';
 import { pathExists, readJsonFile, writeJsonAtomic } from '../utils/fs.js';
 import { BASELINE_SCHEMA_VERSION, type ApprovedHash, type Approval, type Baseline, type BaselineResource } from './baseline-schema.js';
 import { validateBaseline } from './baseline-validator.js';
@@ -124,6 +125,16 @@ function resourcesFromCompletePages(site: SiteResult, complete: ReadonlySet<stri
   return site.resources.filter((r) => r.pages.some((p) => complete.has(p)));
 }
 
+/** Approved security state (headers, form fingerprints) of the given pages of a scan. */
+export function pageSecurityFrom(pages: readonly PageResult[], at: string): Record<string, PageSecurity> {
+  const out: Record<string, PageSecurity> = {};
+  for (const p of pages) {
+    const observed = observedPageSecurity(p, at);
+    if (observed) out[p.key] = observed;
+  }
+  return out;
+}
+
 /** Create the first baseline for a site from a scan. */
 export function createBaseline(site: SiteResult, options: ApprovalOptions & { includePartial?: boolean }): Baseline {
   const at = (options.now ?? new Date()).toISOString();
@@ -140,6 +151,7 @@ export function createBaseline(site: SiteResult, options: ApprovalOptions & { in
     resources,
     domains: siteDomains(site),
     pages: site.pages.filter((p) => options.includePartial === true || p.status === 'complete').map((p) => p.key).sort(),
+    pageSecurity: pageSecurityFrom(site.pages.filter((p) => options.includePartial === true || p.status === 'complete'), at),
   };
 }
 
@@ -183,6 +195,8 @@ export function approveFullScan(existing: Baseline, site: SiteResult, options: A
         }
       : domains,
     pages: union(existing.pages, [...complete]),
+    // Security state of pages scanned completely is re-approved; other pages keep what was approved before.
+    pageSecurity: { ...(existing.pageSecurity ?? {}), ...pageSecurityFrom(site.pages.filter((p) => complete.has(p.key)), at) },
   };
 }
 
@@ -209,6 +223,12 @@ export type ApprovalItem =
       readonly hashes: readonly string[];
     }
   | {
+      /** Approve the observed security headers and/or form fingerprint of one page (PCI DSS 11.6.1). */
+      readonly kind: 'page-security';
+      readonly value: string;
+      readonly part: PageSecurityPart;
+    }
+  | {
       readonly kind: 'script-domain' | 'outbound-domain' | 'outbound-host' | 'iframe-origin' | 'remove-iframe-origin';
       readonly value: string;
     };
@@ -221,6 +241,8 @@ export function describeApprovalItem(item: ApprovalItem): string {
   switch (item.kind) {
     case 'resource':
       return `resource:${item.value}@${item.sha256 ?? 'no-content'}`;
+    case 'page-security':
+      return `page-security:${item.value}#${item.part}`;
     case 'remove-resource':
       return `remove-resource:${item.value}@${[...item.hashes].sort().join(',')}`;
     default:
@@ -241,6 +263,7 @@ export function approveSelected(existing: Baseline, site: SiteResult, items: rea
   // Identities that already received an approved version in this run: further
   // variants of the same identity are added, not substituted.
   const approvedThisRun = new Set<string>();
+  const pageSecurity: Record<string, PageSecurity> = { ...(existing.pageSecurity ?? {}) };
   for (const item of items) {
     switch (item.kind) {
       case 'resource': {
@@ -278,6 +301,16 @@ export function approveSelected(existing: Baseline, site: SiteResult, items: rea
         });
         break;
       }
+      case 'page-security': {
+        const page = site.pages.find((p) => p.key === item.value);
+        const observed = page ? observedPageSecurity(page, at) : undefined;
+        const part = observed?.[item.part];
+        if (!observed || part === undefined) {
+          throw new BaselineError(`The scan has no ${item.part === 'headers' ? 'security headers' : 'form snapshot'} for page ${item.value}`, 'Run "thirdsentry diff" again and approve the current findings.');
+        }
+        pageSecurity[item.value] = { ...(pageSecurity[item.value] ?? { approvedAt: at }), [item.part]: part, approvedAt: at };
+        break;
+      }
       case 'script-domain':
         domains.scripts.add(item.value);
         break;
@@ -302,6 +335,7 @@ export function approveSelected(existing: Baseline, site: SiteResult, items: rea
     approvals: [...existing.approvals, approval('selected', options, at, items.map(describeApprovalItem))].slice(-MAX_APPROVAL_HISTORY),
     resources: resources.sort((a, b) => a.identity.localeCompare(b.identity)),
     domains: { scripts: sorted(domains.scripts), outbound: sorted(domains.outbound), outboundHosts: sorted(domains.outboundHosts), iframes: sorted(domains.iframes) },
+    ...(Object.keys(pageSecurity).length > 0 ? { pageSecurity } : {}),
   };
 }
 
@@ -312,6 +346,12 @@ export interface BaselineChangeSummary {
   readonly addedDomains: readonly string[];
   readonly removedDomains: readonly string[];
   readonly totalResources: number;
+  /** Pages whose approved security headers or form fingerprint are new or different (PCI DSS 11.6.1). */
+  readonly securityChangedPages: readonly string[];
+}
+
+function securityKey(s: PageSecurity | undefined): string {
+  return s ? JSON.stringify({ h: s.headers ?? null, f: s.forms?.hash ?? null }) : '';
 }
 
 /** Describe what a baseline update would change, for the confirmation prompt. */
@@ -331,5 +371,8 @@ export function summarizeBaselineChange(previous: Baseline | undefined, next: Ba
     addedDomains: [...allNext].filter((d) => !allPrev.has(d)).sort(),
     removedDomains: [...allPrev].filter((d) => !allNext.has(d)).sort(),
     totalResources: next.resources.length,
+    securityChangedPages: Object.keys(next.pageSecurity ?? {})
+      .filter((p) => securityKey(previous?.pageSecurity?.[p]) !== securityKey(next.pageSecurity?.[p]))
+      .sort(),
   };
 }

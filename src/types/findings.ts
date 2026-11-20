@@ -31,7 +31,12 @@ export type ChangeKind =
   | 'iframe-origin-added'
   | 'iframe-origin-removed'
   | 'page-failed'
-  | 'coverage-degraded';
+  | 'coverage-degraded'
+  // PCI DSS support (docs/pci.md)
+  | 'security-header-changed'
+  | 'payment-form-changed'
+  | 'security-baseline-missing'
+  | 'script-unjustified';
 
 /** A single contribution to a finding's risk score, shown to users verbatim. */
 export interface Signal {

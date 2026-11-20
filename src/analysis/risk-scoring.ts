@@ -57,6 +57,25 @@ export const SIGNALS = {
   'suspicious-domain': { weight: 30, description: 'The domain matches a configured reputation warning (domains.suspicious)', suspicious: true },
   'ip-address-destination': { weight: 15, description: 'The destination is a raw IP address rather than a domain name', suspicious: true },
   'script-references-new-destination': { weight: 25, description: 'The changed script itself references the new outbound destination', suspicious: true },
+  // PCI DSS support: payment form integrity (6.4.3 / 11.6.1), see docs/pci.md
+  'payment-form-added': { weight: 50, description: 'A new form that collects payment card data appeared (a classic injected fake form)', suspicious: true },
+  'form-added': { weight: 10, description: 'A new form appeared on a sensitive page' },
+  'form-removed': { weight: 8, description: 'An approved form is no longer present' },
+  'payment-form-removed': { weight: 25, description: 'An approved payment form is no longer present' },
+  'form-action-origin-changed': { weight: 50, description: 'A form now submits to a different origin than approved', suspicious: true },
+  'form-action-path-changed': { weight: 20, description: 'A form now submits to a different path on the same origin' },
+  'form-action-external': { weight: 25, description: 'The form target is an origin that was never part of the approved page', suspicious: true },
+  'form-method-changed': { weight: 12, description: 'The HTTP method of a form changed' },
+  'payment-field-added': { weight: 45, description: 'A new payment-card input (card number, CVV, expiry) was added to a form', suspicious: true },
+  'payment-field-removed': { weight: 30, description: 'An approved payment-card input was removed from a form' },
+  'payment-field-renamed': { weight: 30, description: 'A payment-card input was renamed or its attributes changed' },
+  'form-field-changed': { weight: 8, description: 'A non-payment input was added, removed or renamed' },
+  'payment-frame-added': { weight: 30, description: 'Payment fields are now hosted in an iframe from an origin that was not approved' },
+  'payment-frame-removed': { weight: 12, description: 'An approved payment iframe no longer hosts payment fields' },
+  'security-baseline-missing': { weight: 15, description: 'No approved security headers or form structure recorded yet for some pages (nothing to compare against)' },
+  'script-unjustified-third-party': { weight: 15, description: 'A third-party script on a payment page has no documented business/technical justification (PCI DSS 6.4.3)' },
+  'script-unjustified-first-party': { weight: 8, description: 'A first-party script on a payment page has no documented justification (PCI DSS 6.4.3)' },
+  'script-review-overdue': { weight: 8, description: 'The periodic review of a script justification is overdue (PCI DSS 6.4.3)' },
 } as const satisfies Record<string, SignalDefinition>;
 
 export type SignalId = keyof typeof SIGNALS | `rule:${string}` | `new-rule:${string}` | (string & {});

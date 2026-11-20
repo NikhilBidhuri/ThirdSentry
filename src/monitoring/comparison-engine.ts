@@ -3,6 +3,8 @@ import type { DomainPolicy } from '../config/schema.js';
 import { EMPTY_DOMAIN_POLICY, evaluateDomain } from '../analysis/domain-analyzer.js';
 import type { ChangeKind } from '../types/findings.js';
 import type { ScriptResource, SiteResult } from '../types/index.js';
+import type { PciChangePayload } from '../pci/pci-change.js';
+import { compareSecurity } from '../pci/security-compare.js';
 
 /**
  * Compares a site's scan result with its approved baseline and produces raw
@@ -32,6 +34,8 @@ export interface Change {
   readonly origin?: string;
   readonly pages: readonly string[];
   readonly details: Readonly<Record<string, string>>;
+  /** Structured payload of PCI-related changes (security headers, forms). */
+  readonly pci?: PciChangePayload;
 }
 
 export interface ComparisonResult {
@@ -298,6 +302,7 @@ export function compareSite(site: SiteResult, baseline: Baseline, policy: Domain
   }
 
   changes.push(...coverageChanges(site, baseline));
+  changes.push(...compareSecurity(site, baseline));
 
   // Domains serving scripts.
   const approvedScriptDomains = new Set(baseline.domains.scripts);

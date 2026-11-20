@@ -38,6 +38,10 @@ const KIND_DESCRIPTIONS: Record<string, string> = {
   'denylisted-domain': 'A denylisted domain is used by the page.',
   'iframe-origin-added': 'A new iframe origin is embedded in the page.',
   'iframe-origin-removed': 'An approved iframe origin is no longer embedded.',
+  'security-header-changed': 'A security-relevant HTTP response header of a page changed (PCI DSS 11.6.1).',
+  'payment-form-changed': 'The structure of a payment form changed: action, method or card input fields (PCI DSS 11.6.1).',
+  'security-baseline-missing': 'No approved security headers or form structure are recorded yet for some pages.',
+  'script-unjustified': 'A script on a payment page has no documented justification or its review is overdue (PCI DSS 6.4.3).',
 };
 
 export interface SarifOptions {

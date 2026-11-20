@@ -21,6 +21,23 @@ export interface SiteComparisonSummary {
   readonly findings: number;
 }
 
+/** PCI DSS 6.4.3 script inventory summary of one site (sensitive pages only). */
+export interface PciReportSection {
+  readonly requireJustification: boolean;
+  readonly sites: ReadonlyArray<{
+    readonly site: string;
+    /** Path of the inventory file, or null when the site has none. */
+    readonly inventoryFile: string | null;
+    readonly sensitiveScripts: number;
+    readonly authorized: number;
+    readonly missingJustification: number;
+    readonly reviewOverdue: number;
+    readonly notApproved: number;
+    readonly unmatchedEntries: number;
+    readonly gaps: ReadonlyArray<{ readonly url: string; readonly status: string; readonly issues: readonly string[] }>;
+  }>;
+}
+
 /** The analysis report: scan facts + comparison with baselines + findings. */
 export interface AnalysisReport {
   readonly schemaVersion: 1;
@@ -39,6 +56,8 @@ export interface AnalysisReport {
   readonly findingCounts: Readonly<Record<Severity, number>>;
   readonly highestSeverity: Severity | 'none';
   readonly coverageLimitations: readonly string[];
+  /** Script inventory section (present when an inventory exists or pci.requireJustification is on). */
+  readonly pci?: PciReportSection;
   /** Plain-language summary for non-specialists. */
   readonly headline: string;
 }

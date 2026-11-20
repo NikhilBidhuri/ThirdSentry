@@ -97,6 +97,22 @@ function renderDestinations(site: SiteResult): string {
   return `<table><thead><tr><th>Host</th><th>Party</th><th>Methods</th><th>Types</th><th>Requests</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+function renderPci(report: AnalysisReport): string {
+  const pci = report.pci;
+  if (!pci || pci.sites.length === 0) return '';
+  const rows = pci.sites
+    .map(
+      (s) =>
+        `<tr><td>${e(s.site)}</td><td class="mono">${e(s.inventoryFile ?? 'none')}</td><td>${s.sensitiveScripts}</td><td class="ok">${s.authorized}</td><td${s.missingJustification ? ' class="warn"' : ''}>${s.missingJustification}</td><td${s.reviewOverdue ? ' class="warn"' : ''}>${s.reviewOverdue}</td><td>${s.notApproved}</td><td>${s.unmatchedEntries}</td></tr>`,
+    )
+    .join('');
+  const gaps = pci.sites.flatMap((s) => s.gaps.map((g) => `<tr><td>${e(s.site)}</td><td>${e(g.status)}</td><td class="mono">${e(g.url)}</td><td>${e(g.issues.join('; '))}</td></tr>`)).join('');
+  return `<h2>Script inventory (PCI DSS 6.4.3)</h2>
+<div class="card"><table><thead><tr><th>Site</th><th>Inventory file</th><th>Scripts on payment pages</th><th>Authorized</th><th>No justification</th><th>Review overdue</th><th>Not approved</th><th>Unmatched entries</th></tr></thead><tbody>${rows}</tbody></table>
+${gaps ? `<details open><summary>Gaps</summary><table><thead><tr><th>Site</th><th>Status</th><th>Script</th><th>Details</th></tr></thead><tbody>${gaps}</tbody></table></details>` : ''}
+<p class="muted">Supports, but does not by itself demonstrate, compliance with PCI DSS 6.4.3. See docs/pci.md.</p></div>`;
+}
+
 export function renderHtmlReport(report: AnalysisReport, scan?: ScanResult): string {
   const s = report.scanSummary;
   const active = report.findings.filter((f) => !f.suppressed);
@@ -143,6 +159,7 @@ export function renderHtmlReport(report: AnalysisReport, scan?: ScanResult): str
 <h2>Sites</h2>
 <div class="card"><table><thead><tr><th>Site</th><th>URL</th><th>Scan</th><th>Baseline</th><th>Unchanged</th><th>New</th><th>Modified</th><th>Removed</th><th>New domains</th></tr></thead><tbody>${siteRows}</tbody></table></div>
 
+${renderPci(report)}
 <h2>Findings (${active.length})</h2>
 ${active.length === 0 ? '<p class="muted">No active findings.</p>' : active.map(renderFinding).join('\n')}
 ${suppressed.length ? `<h2>Suppressed findings (${suppressed.length})</h2>${suppressed.map(renderFinding).join('\n')}` : ''}

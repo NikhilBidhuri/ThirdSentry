@@ -324,6 +324,18 @@ export const AlertsSchema = z
   })
   .strict();
 
+export const PciSchema = z
+  .object({
+    /**
+     * Report scripts on sensitive pages that lack a documented justification
+     * (PCI DSS 6.4.3) as info/low `script-unjustified` findings.
+     */
+    requireJustification: z.boolean().default(false),
+    /** Default review interval in days used by "thirdsentry inventory add" when --review-by is not given. */
+    reviewIntervalDays: z.number().int().min(1).max(3650).default(365),
+  })
+  .strict();
+
 export const ReportingSchema = z
   .object({
     /** Report formats written after each scan. */
@@ -355,6 +367,7 @@ export const ConfigSchema = z
     domains: DomainPolicySchema.prefault({}),
     suppressions: z.array(SuppressionSchema).default([]),
     reporting: ReportingSchema.prefault({}),
+    pci: PciSchema.prefault({}),
     alerts: AlertsSchema.prefault({}),
     /** Default --fail-on threshold for scan/diff (`none` never fails on findings). */
     failOn: z.enum([...SEVERITIES, 'none']).default('high'),
@@ -385,4 +398,5 @@ export type NetworkSecurityConfig = z.infer<typeof NetworkSecuritySchema>;
 export type RuleConfig = z.infer<typeof RuleConfigSchema>;
 export type DomainPolicy = z.infer<typeof DomainPolicySchema>;
 export type Suppression = z.infer<typeof SuppressionSchema>;
+export type PciConfig = z.infer<typeof PciSchema>;
 export type AlertsConfig = z.infer<typeof AlertsSchema>;

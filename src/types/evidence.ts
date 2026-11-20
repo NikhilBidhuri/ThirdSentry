@@ -128,6 +128,40 @@ export const IssueSchema = z.object({
 
 export const PageStatusSchema = z.enum(['complete', 'partial', 'failed']);
 
+/**
+ * Structural snapshot of the forms on a sensitive page (PCI DSS 11.6.1 / Magecart detection).
+ * Written by the untrusted worker: every string is size-capped and nothing in it is trusted
+ * (e.g. "payment-like" is recomputed by trusted code from name/type/autocomplete).
+ * Field VALUES are never captured.
+ */
+export const FormFieldEvidenceSchema = z.object({
+  name: z.string().max(256),
+  type: z.string().max(32),
+  autocomplete: z.string().max(128).optional(),
+});
+
+export const FormEvidenceSchema = z.object({
+  /** Resolved absolute form action ('' for fields that belong to no form element). */
+  action: url,
+  /** Additional targets set through formaction attributes of submit buttons. */
+  buttonActions: z.array(url).max(20),
+  method: z.string().max(16),
+  fields: z.array(FormFieldEvidenceSchema).max(200),
+  /** Origin of the frame that contains the form. */
+  frameOrigin: z.string().max(2_048),
+  /** Fields that are not inside any <form> element. */
+  formless: z.boolean(),
+});
+
+export const FormSnapshotEvidenceSchema = z.object({
+  status: z.enum(['captured', 'failed']),
+  forms: z.array(FormEvidenceSchema).max(100),
+  /** Origins of child frames that contain payment-like inputs. */
+  paymentFrames: z.array(z.string().max(2_048)).max(50),
+  truncated: z.boolean().optional(),
+  note: shortText.optional(),
+});
+
 /** Counters for evidence that was observed but not recorded (each also reported as an issue). */
 export const DroppedEvidenceSchema = z
   .object({
@@ -179,6 +213,8 @@ export const PageEvidenceSchema = z.object({
   consoleErrors: z.array(shortText).max(200),
   pageErrors: z.array(shortText).max(200),
   screenshotBase64: z.string().optional(),
+  /** Form structure of sensitive pages (absent on other pages and in older evidence). */
+  formSnapshot: FormSnapshotEvidenceSchema.optional(),
   /** Optional (absent in evidence written by older versions). */
   dropped: DroppedEvidenceSchema.optional(),
   /** Approximate bytes of evidence recorded for this page (budget accounting). */
@@ -235,6 +271,8 @@ export type PageEvidence = z.infer<typeof PageEvidenceSchema>;
 export type ProxyEvent = z.infer<typeof ProxyEventSchema>;
 export type SiteEvidence = z.infer<typeof SiteEvidenceSchema>;
 export type ScanEvidence = z.infer<typeof ScanEvidenceSchema>;
+export type FormEvidence = z.infer<typeof FormEvidenceSchema>;
+export type FormSnapshotEvidence = z.infer<typeof FormSnapshotEvidenceSchema>;
 export type FrameEvidence = z.infer<typeof FrameEvidenceSchema>;
 export type DroppedEvidence = z.infer<typeof DroppedEvidenceSchema>;
 export type BodyStatus = z.infer<typeof BodyStatusSchema>;

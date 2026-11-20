@@ -203,6 +203,15 @@ Static behaviour analysis is described in [rules.md](rules.md).
 
 A list of documented suppressions. Each entry needs a `reason` and at least one of `id`, `kind`, `rule`, `resource`, `domain`; `site` and `expires` are optional. See [rules.md](rules.md#suppressing-false-positives).
 
+## `pci`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `requireJustification` | `false` | Report scripts on sensitive pages without a documented justification (or with an overdue review) as info/low `script-unjustified` findings (PCI DSS 6.4.3). The `inventory` report section appears whenever an inventory file exists or this is on. |
+| `reviewIntervalDays` | `365` | Default `reviewBy` offset used by `thirdsentry inventory add` when `--review-by` is omitted. |
+
+See [pci.md](pci.md).
+
 ## `reporting`
 
 | Key | Default | Description |

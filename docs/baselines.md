@@ -88,7 +88,7 @@ In non-interactive environments (CI), `baseline` refuses to run without `--yes`.
 
 ## File format versions
 
-Baselines and scan results carry an integer `schemaVersion` (currently 1 for both). A file written by an **older** ThirdSentry is upgraded in memory by the migrations registered in `src/storage/migrations.ts` and is rewritten in the current format only when it is saved again (for example by the next approval). A file written by a **newer** ThirdSentry is refused with an "upgrade ThirdSentry" error; it is never guessed at or downgraded. Changing a schema requires a migration from the previous version and a test that reads the old format.
+Baselines and scan results carry an integer `schemaVersion` (currently 2 for baselines, 1 for scan results). Baseline version 2 adds the optional `pageSecurity` map (approved security headers and form fingerprint per page, see [pci.md](pci.md)); a version 1 baseline is upgraded in memory unchanged, and pages without a `pageSecurity` entry produce a single low-severity `security-baseline-missing` notice instead of changes until their state is approved. A file written by an **older** ThirdSentry is upgraded in memory by the migrations registered in `src/storage/migrations.ts` and is rewritten in the current format only when it is saved again (for example by the next approval). A file written by a **newer** ThirdSentry is refused with an "upgrade ThirdSentry" error; it is never guessed at or downgraded. Changing a schema requires a migration from the previous version and a test that reads the old format.
 
 ## A missing baseline is not a pass
 
