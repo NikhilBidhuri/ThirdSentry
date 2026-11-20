@@ -10,6 +10,7 @@ import { EvidenceValidationError, ThirdSentryError } from '../utils/errors.js';
 import { assembleEvidence } from './evidence-assembly.js';
 import { getLogger } from '../utils/logger.js';
 import { formatZodIssues } from '../config/loader.js';
+import { isSecretName, journeySecretNames } from '../config/journeys.js';
 
 /**
  * Runs the browser worker in a separate Node.js process.
@@ -55,12 +56,29 @@ export function defaultPlaywrightBrowsersPath(env: NodeJS.ProcessEnv = process.e
   return join(env.XDG_CACHE_HOME ?? join(homedir(), '.cache'), 'ms-playwright');
 }
 
-/** Build the minimal environment passed to the browser worker. */
-export function buildWorkerEnv(sandboxDir: string, parentEnv: NodeJS.ProcessEnv = process.env, logLevel = 'info'): NodeJS.ProcessEnv {
+/**
+ * Build the minimal environment passed to the browser worker.
+ *
+ * `journeySecrets` names the THIRDSENTRY_SECRET_* variables referenced by
+ * journey `fill` steps. Only those (and only names of that exact form) are
+ * copied from the parent environment: this is the one deliberate exception to
+ * "the browser worker has no secrets" (docs/security.md#journey-credentials).
+ * Alert credentials and every other variable stay out.
+ */
+export function buildWorkerEnv(
+  sandboxDir: string,
+  parentEnv: NodeJS.ProcessEnv = process.env,
+  logLevel = 'info',
+  journeySecrets: readonly string[] = [],
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const key of ENV_ALLOWLIST) {
     const value = parentEnv[key];
     if (value !== undefined) env[key] = value;
+  }
+  for (const key of journeySecrets) {
+    const value = parentEnv[key];
+    if (isSecretName(key) && value !== undefined) env[key] = value;
   }
   env.PLAYWRIGHT_BROWSERS_PATH = defaultPlaywrightBrowsersPath(parentEnv);
   const home = join(sandboxDir, 'home');
@@ -149,7 +167,7 @@ export async function runIsolatedCollection(request: CollectRequest, options: Sa
     await mkdir(outputDir, { recursive: true });
     await writeFile(requestPath, JSON.stringify(request));
 
-    const env = buildWorkerEnv(sandboxDir, process.env, options.logLevel);
+    const env = buildWorkerEnv(sandboxDir, process.env, options.logLevel, journeySecretNames(request.sites));
     log.debug({ entry, sandboxDir }, 'starting isolated browser worker');
     const child = fork(entry, [requestPath, outputDir], {
       cwd: sandboxDir,

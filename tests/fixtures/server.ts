@@ -21,6 +21,8 @@ export interface Route {
   delayMs?: number;
   /** Redirect target (sets 302 + Location). */
   redirect?: string;
+  /** Dynamic handler (cookies, form posts); receives the request body. Takes precedence over the static fields. */
+  handler?: (req: IncomingMessage, res: ServerResponse, body: string) => void;
 }
 
 export type RouteTable = Map<string, Route>; // key: "host/path"
@@ -67,6 +69,13 @@ export class FixtureServer {
     const route = this.routes.get(`${host}${path}`);
     if (!route) {
       res.writeHead(404, { 'content-type': 'text/plain' }).end('not found');
+      return;
+    }
+    if (route.handler) {
+      const handler = route.handler;
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('end', () => handler(req, res, Buffer.concat(chunks).toString('utf8')));
       return;
     }
     const respond = (): void => {

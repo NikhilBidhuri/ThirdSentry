@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { RULES_BY_ID } from '../analysis/indicator-rules.js';
 import { checkPolicyNames, ScriptPolicySchema } from '../policies/schema.js';
+import { JourneySchema, MAX_JOURNEYS_PER_SITE } from './journeys.js';
 
 /**
  * ThirdSentry configuration schema (thirdsentry.yml).
@@ -71,6 +72,8 @@ export const SiteSchema = z
     scriptPolicies: z.array(ScriptPolicySchema).default([]),
     browser: BrowserOptionsSchema.partial().optional(),
     scan: ScanOptionsSchema.partial().optional(),
+    /** Logged-in, multi-step journeys (login -> cart -> checkout). See docs/configuration.md. */
+    journeys: z.array(JourneySchema).max(MAX_JOURNEYS_PER_SITE).default([]),
   })
   .strict();
 
@@ -463,6 +466,11 @@ export const ConfigSchema = z
         ctx.addIssue({ code: 'custom', path: ['sites', i, 'name'], message: `duplicate site name "${site.name}"` });
       }
       seen.add(site.name);
+      const journeyNames = new Set<string>();
+      site.journeys.forEach((j, ji) => {
+        if (journeyNames.has(j.name)) ctx.addIssue({ code: 'custom', path: ['sites', i, 'journeys', ji, 'name'], message: `duplicate journey name "${j.name}"` });
+        journeyNames.add(j.name);
+      });
     });
     checkPolicyNames(cfg.scriptPolicies, cfg.sites, (path, message) => ctx.addIssue({ code: 'custom', path, message }));
     for (const id of Object.keys(cfg.rules)) {

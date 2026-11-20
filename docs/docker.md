@@ -105,6 +105,17 @@ Why a separate service rather than the alerter or `tools`: the alerter holds you
 
 Schedule it daily or weekly (see [cron.md](cron.md)); reports warn when the database is older than `libraries.maxDbAgeDays` (default 30). Check the state with `docker compose run --rm tools vulndb status`.
 
+## Journeys and credentials
+
+Logged-in journeys need credentials in the browser, so the scanner container is the one place that receives them. Keep them out of `.env` (read by the alerter) and in a separate file that only the scanner reads:
+
+```bash
+# journeys.env (next to docker-compose.yml; not committed; chmod 600)
+THIRDSENTRY_SECRET_SHOP_PASSWORD=<password of a dedicated, least-privilege test account>
+```
+
+`docker-compose.yml` attaches it with `env_file` to the `scanner` service only (optional: without the file the scanner has no secrets, and journeys that reference one fail with `journey-secret-missing`). The analyzer, alerter and egress proxy do not get it. Only variables named `THIRDSENTRY_SECRET_*` and referenced by a journey are used. For a `storageState` session file, mount it read-only into the scanner and reference the container path (relative to `thirdsentry.yml`). Use dedicated test accounts, never live payment credentials; see [security.md](security.md#journey-credentials).
+
 ## Environment variables
 
 | Variable | Where | Purpose |
@@ -115,6 +126,7 @@ Schedule it daily or weekly (see [cron.md](cron.md)); reports warn when the data
 | `THIRDSENTRY_METRICS_PORT` | host (compose) | Host port of the optional `metrics` service (bound to `127.0.0.1`). Default `9464`. |
 | `THIRDSENTRY_HEARTBEAT_URL` | `.env` (alerter only) | Ping URL for `health.heartbeat`. It is a secret; keep it out of `thirdsentry.yml`. |
 | Alert variables | `.env` (alerter only) | See [alerts.md](alerts.md#environment-variables). |
+| `THIRDSENTRY_SECRET_*` | `journeys.env` (scanner only) | Journey credentials referenced as `${THIRDSENTRY_SECRET_<NAME>}` in `fill` steps. |
 
 ## Scheduling
 

@@ -17,6 +17,7 @@ ThirdSentry visits your pages in a real browser, records every script that runs,
 - **Change detection**: new, removed and modified scripts, new third-party domains, redirect changes, iframe origin changes and new outbound destinations.
 - **Script policies** (pin, path-versions, domain-only) for vendors whose scripts rotate: explicit, expiring and reviewable, and they never hide new suspicious behaviour ([docs/policies.md](docs/policies.md)).
 - **Static analysis** with Babel ASTs for behaviours worth reviewing (eval, script injection, cookie/storage/form access, beacons, WebSockets, obfuscation, and sensitive-data-plus-transmission combinations), with explainable risk scoring.
+- **Logged-in journeys**: scripted multi-step flows (login, cart, checkout) with stable `journey:<name>/<capture>` page keys, secrets only via `${THIRDSENTRY_SECRET_<NAME>}`, and a guard against submitting payment forms.
 - **Known libraries and CVEs**: recognises libraries and versions (jQuery, Lodash, Bootstrap, ...) offline from banners, code and URLs, explains version changes, and flags known vulnerabilities from the retire.js database ([docs](docs/libraries.md)).
 - **Reports** in JSON, SARIF (GitHub Code Scanning) and HTML; **alerts** via Slack, Microsoft Teams, PagerDuty, webhooks, GitHub Issues and email.
 - **CSP linter** for Content-Security-Policy headers.

@@ -4,7 +4,7 @@ ThirdSentry tries to be explicit about what it cannot see. Every scan report rep
 
 ## Coverage of a single scan
 
-- **Only configured pages, once, without interaction.** ThirdSentry does not click, scroll, log in, accept consent banners or submit forms. Scripts loaded only after interaction, on unlisted pages, or for authenticated users are not observed.
+- **Only configured pages and journeys, without general interaction.** ThirdSentry does not click, scroll, log in, accept consent banners or submit forms on its own. Scripts loaded only after interaction, on unlisted pages, or for authenticated users are not observed, except where you script a [journey](configuration.md#journeys). Journeys are declarative and brittle by nature (selectors change; a changed login flow fails the journey until you update it), cover only the paths you script, and by default refuse to submit payment forms.
 - **Variants.** Vendors can serve different code by geography, user agent, time, consent state, A/B bucket or bot detection. A scan observes one variant. Malicious code that deliberately hides from automated or headless browsers may not be served at all.
 - **Timing.** Pages are observed for a bounded time (`timeout`, `networkIdleTimeout`, `settleMs`). Code that loads later, or sends data later, is not seen.
 

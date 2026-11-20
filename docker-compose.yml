@@ -5,8 +5,9 @@
 #   egress-proxy  only container with internet access; enforces the network policy
 #                 (blocks private, loopback, link-local and metadata addresses per connection)
 #                 and records connection events per run/site on the proxy-events volume
-#   scanner       runs the browser; NO internet route (internal network), NO secrets,
-#                 NO baselines; can only reach the egress proxy
+#   scanner       runs the browser; NO internet route (internal network), NO baselines;
+#                 can only reach the egress proxy. No secrets, except the optional
+#                 journeys.env (journey test-account credentials) that only it reads
 #   analyzer      NO network at all; validates evidence, compares with read-only baselines,
 #                 takes connection events from the proxy's record (read-only), writes reports
 #   alerter       only container that receives alert credentials (.env); reads reports
@@ -81,6 +82,11 @@ services:
     # internet or your network, no secrets) is the isolation boundary instead.
     # The scanner does NOT mount proxy-events: it cannot read or alter the record.
     command: ["--config", "/work/thirdsentry.yml", "collect", "--out", "/evidence/${THIRDSENTRY_RUN_ID:-manual}.json", "--run-id", "${THIRDSENTRY_RUN_ID:-manual}", "--proxy", "http://egress-proxy:3128", "--no-chromium-sandbox"]
+    # Credentials for logged-in journeys (${THIRDSENTRY_SECRET_<NAME>} in fill steps): ONLY this service reads
+    # journeys.env, never the alerter or the analyzer. Optional; use dedicated, least-privilege test accounts.
+    env_file:
+      - path: journeys.env
+        required: false
     volumes:
       - *config-volume
       - evidence:/evidence

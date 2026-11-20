@@ -4,7 +4,8 @@ import { parse as parseYaml, YAMLParseError } from 'yaml';
 import type { z } from 'zod';
 import { ConfigError, ThirdSentryError } from '../utils/errors.js';
 import { pathExists } from '../utils/fs.js';
-import { ConfigSchema, ScanOptionsSchema, type BrowserProfileName, type ScanOptions, type ThirdSentryConfig } from './schema.js';
+import { journeyHostAllowed, journeyPageKey, type JourneyStep } from './journeys.js';
+import { ConfigSchema, ScanOptionsSchema, type BrowserProfileName, type ScanOptions, type SiteConfig, type ThirdSentryConfig } from './schema.js';
 import { NetworkPolicy } from '../security/network-policy.js';
 import { resolvePageUrl, validateTargetUrl } from '../security/url-validator.js';
 import { storagePaths, type StoragePaths } from '../storage/paths.js';
@@ -20,6 +21,20 @@ export interface ResolvedPage {
   /** Path + query used as a stable page key in baselines and findings. */
   readonly key: string;
   readonly sensitive: boolean;
+  /** Set for the checkpoints of a journey (key `journey:<name>/<capture>`); these are scanned by the journey runner, not as plain pages. */
+  readonly journey?: { readonly name: string; readonly capture: string };
+}
+
+/** A journey with `goto` URLs resolved against the site and the storage state path made absolute. Holds only secret *references*, never values. */
+export interface ResolvedJourney {
+  readonly name: string;
+  readonly sensitive: boolean;
+  readonly storageState?: string;
+  readonly allowedHosts: readonly string[];
+  readonly timeoutMs: number;
+  readonly steps: readonly JourneyStep[];
+  /** One entry per `capture` step, in step order (also present in ResolvedSite.pages after the plain pages). */
+  readonly captures: readonly ResolvedPage[];
 }
 
 export interface ResolvedSite {
@@ -31,6 +46,8 @@ export interface ResolvedSite {
   readonly scan: ScanOptions;
   readonly firstPartyDomains: readonly string[];
   readonly ignoreQueryParams: readonly string[];
+  /** Logged-in multi-step journeys (optional so hand-built sites without journeys keep working). */
+  readonly journeys?: readonly ResolvedJourney[];
 }
 
 export interface ResolvedConfig {
@@ -103,7 +120,53 @@ function matchesSensitive(page: ResolvedPage | { key: string; configured: string
   return sensitive.some((s) => s === page.configured || s === page.key || (s.endsWith('*') && page.key.startsWith(s.slice(0, -1))));
 }
 
-export function resolveSites(config: ThirdSentryConfig, policy: NetworkPolicy): ResolvedSite[] {
+function resolveJourneys(site: SiteConfig, siteUrl: URL, policy: NetworkPolicy, where: string, baseDir: string): ResolvedJourney[] {
+  return site.journeys.map((journey, ji) => {
+    const at = `${where}.journeys[${ji}] (${journey.name})`;
+    const steps = journey.steps.map((step, si): JourneyStep => {
+      if (step.type !== 'goto') return step;
+      let url: URL;
+      try {
+        url = resolvePageUrl(siteUrl, step.url, policy);
+      } catch (error) {
+        if (error instanceof ThirdSentryError) throw new ConfigError(`${at}.steps[${si}].url: ${error.message}`, error.hint);
+        throw error;
+      }
+      if (!journeyHostAllowed(url.hostname, siteUrl.hostname, journey.allowedHosts)) {
+        throw new ConfigError(
+          `${at}.steps[${si}].url: ${url.hostname} is outside the site's registrable domain`,
+          "Journeys may only navigate within the site; add the host to the journey's allowedHosts if this is intentional",
+        );
+      }
+      url.hash = '';
+      return { ...step, url: url.toString() };
+    });
+    const captures: ResolvedPage[] = [];
+    for (const step of steps) {
+      if (step.type !== 'capture') continue;
+      const key = journeyPageKey(journey.name, step.name);
+      captures.push({
+        configured: key,
+        // Placeholder: the real URL is recorded when the capture is taken.
+        url: siteUrl.toString(),
+        key,
+        sensitive: step.sensitive ?? journey.sensitive,
+        journey: { name: journey.name, capture: step.name },
+      });
+    }
+    return {
+      name: journey.name,
+      sensitive: journey.sensitive,
+      ...(journey.storageState ? { storageState: resolve(baseDir, journey.storageState) } : {}),
+      allowedHosts: journey.allowedHosts,
+      timeoutMs: journey.timeoutMs,
+      steps,
+      captures,
+    };
+  });
+}
+
+export function resolveSites(config: ThirdSentryConfig, policy: NetworkPolicy, baseDir = process.cwd()): ResolvedSite[] {
   return config.sites.map((site, index) => {
     const where = `sites[${index}] (${site.name})`;
     let siteUrl: URL;
@@ -131,6 +194,8 @@ export function resolveSites(config: ThirdSentryConfig, policy: NetworkPolicy): 
       const partial = { configured, key };
       pages.push({ configured, url: pageUrl.toString(), key, sensitive: matchesSensitive(partial, site.sensitivePages) });
     }
+    const journeys = resolveJourneys(site, siteUrl, policy, where, baseDir);
+    for (const journey of journeys) pages.push(...journey.captures);
     return {
       name: site.name,
       url: siteUrl.toString(),
@@ -140,6 +205,7 @@ export function resolveSites(config: ThirdSentryConfig, policy: NetworkPolicy): 
       scan,
       firstPartyDomains: site.firstPartyDomains,
       ignoreQueryParams: site.ignoreQueryParams,
+      journeys,
     };
   });
 }
@@ -155,7 +221,7 @@ export async function loadConfig(options: { cwd?: string; configPath?: string } 
   let baseDir = dirname(configPath);
   if (baseDir.endsWith('.thirdsentry')) baseDir = dirname(baseDir);
   const policy = createNetworkPolicy(config);
-  const sites = resolveSites(config, policy);
+  const sites = resolveSites(config, policy, baseDir);
   return { config, configPath, baseDir, paths: storagePaths(resolve(baseDir, config.storageDir)), sites };
 }
 
