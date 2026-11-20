@@ -1,15 +1,14 @@
 import { resolve } from 'node:path';
 import type { Command } from 'commander';
 import { createNetworkPolicy, loadConfig, selectSites } from '../../config/loader.js';
-import { analyzeScan, exceedsThreshold, saveReportJson } from '../../monitoring/analysis-runner.js';
+import { analysisExitCode, analyzeScan, missingBaselineNotice, publishReports } from '../../monitoring/analysis-runner.js';
 import { buildCollectRequest, persistScan } from '../../monitoring/scan-manager.js';
-import { parseFormats, writeReports } from '../../reporting/index.js';
+import { parseFormats } from '../../reporting/index.js';
 import { EgressProxy, isValidRunId } from '../../security/egress-proxy.js';
 import { applyTrustedProxyEvents, DEFAULT_MAX_BYTES_PER_RUN, PROXY_EVENTS_PER_SITE, ProxyEventLogWriter, readProxyEventLog } from '../../security/proxy-event-log.js';
 import { validateEvidence } from '../../security/worker-sandbox.js';
 import { ConfigError } from '../../utils/errors.js';
-import { ExitCode } from '../../utils/exit-codes.js';
-import { readJsonFile, writeFileAtomic } from '../../utils/fs.js';
+import { readJsonFile } from '../../utils/fs.js';
 import { getLogger } from '../../utils/logger.js';
 import { globalOptions } from '../context.js';
 import { parseFailOn } from '../fail-on.js';
@@ -43,6 +42,7 @@ interface AnalyzeOptions {
   format?: string;
   output?: string;
   failOn?: string;
+  allowMissingBaseline?: boolean;
 }
 
 function parseRunId(value: string | undefined): string | undefined {
@@ -83,9 +83,11 @@ export function registerPipeline(program: Command): void {
       };
       // Loaded lazily: only this command needs the browser stack.
       const { collectEvidence } = await import('../../browser/collector.js');
+      const { writeEvidenceJson } = await import('../../browser/evidence-sink.js');
       const evidence = await collectEvidence(request);
       const out = resolve(opts.out);
-      await writeFileAtomic(out, JSON.stringify(evidence));
+      // Streamed page by page: a single JSON.stringify of a large scan can exceed V8's string limit.
+      await writeEvidenceJson(out, evidence);
       const proxyRunId = opts.proxy ? (runId ?? evidence.scanId) : undefined;
       if (g.json) printJson({ evidence: out, scanId: evidence.scanId, ...(proxyRunId ? { proxyRunId } : {}) });
       else print(color.green(`Evidence for scan ${evidence.scanId} written to ${out}${proxyRunId ? ` (proxy run id ${proxyRunId})` : ''}`));
@@ -99,6 +101,7 @@ export function registerPipeline(program: Command): void {
     .option('-f, --format <formats>', 'report formats: json, sarif, html')
     .option('-o, --output <dir>', 'directory for reports')
     .option('--fail-on <severity>', 'exit with code 1 if a finding is at least this severe')
+    .option('--allow-missing-baseline', 'exit 0 instead of 3 when a scanned site has no approved baseline yet')
     .action(async (opts: AnalyzeOptions, command: Command) => {
       const g = globalOptions(command);
       const resolved = await loadConfig({ ...(g.config ? { configPath: g.config } : {}) });
@@ -125,16 +128,21 @@ export function registerPipeline(program: Command): void {
       }
       const run = await persistScan(resolved, evidence);
       const { report } = await analyzeScan(resolved, run.result, { scanPath: run.scanPath, updateState: true });
-      await saveReportJson(resolved, report);
-      const written = await writeReports(resolved, report, run.result, formats, opts.output);
+      const { scanReportDir: _scanDir, perScan: _perScan, ...written } = await publishReports(resolved, report, run.result, formats, {
+        ...(opts.output ? { outputDir: opts.output } : {}),
+        alwaysJson: true,
+      });
       if (g.json) printJson({ scan: run.result.scanId, report, reports: written });
       else {
         printScanSummary(run.result, g.verbose === true);
         printReport(report, g.verbose === true);
         for (const [format, path] of Object.entries(written)) print(color.gray(`${format.toUpperCase()} report: ${path}`));
       }
-      if (exceedsThreshold(report, failOn)) process.exitCode = ExitCode.FindingsThresholdExceeded;
-      else if (run.result.status !== 'complete') process.exitCode = ExitCode.ScanIncomplete;
+      const allowMissingBaseline = opts.allowMissingBaseline === true;
+      const notice = missingBaselineNotice(report, allowMissingBaseline);
+      if (notice) process.stderr.write(`${notice}
+`);
+      process.exitCode = analysisExitCode(report, { failOn, allowMissingBaseline });
     });
 
   program

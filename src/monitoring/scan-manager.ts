@@ -1,4 +1,6 @@
-import { collectEvidence, newScanId, type CollectRequest } from '../browser/collector.js';
+// Type-only: the browser stack (Playwright) is loaded lazily, only when a scan collects.
+import type { CollectRequest } from '../browser/collector.js';
+import { newScanId } from '../utils/scan-id.js';
 import { createNetworkPolicy, type ResolvedConfig, type ResolvedSite } from '../config/loader.js';
 import { processEvidence, type ProcessedScan } from '../analysis/evidence-processor.js';
 import { analyzeResources } from '../analysis/script-analysis.js';
@@ -76,8 +78,10 @@ export async function collect(resolved: ResolvedConfig, request: CollectRequest,
     });
   }
   log.warn('security.isolation.mode is "none": the browser runs inside the coordinator process. Use only for debugging.');
-  // Round-trip through the validator so both modes apply identical checks.
-  return validateEvidence(JSON.parse(JSON.stringify(await collectEvidence(request))));
+  const { collectEvidence } = await import('../browser/collector.js');
+  // Validate with the same schema as the isolated modes (no JSON round-trip: one
+  // string for a large scan can exceed V8's maximum string length).
+  return validateEvidence(await collectEvidence(request));
 }
 
 /**

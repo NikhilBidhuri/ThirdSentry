@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { Limits, NetworkSecurityConfig } from '../config/schema.js';
 import type { ResolvedSite } from '../config/loader.js';
 import { EgressProxy } from '../security/egress-proxy.js';
@@ -29,10 +28,7 @@ export interface CollectRequest {
   readonly proxyRunId?: string;
 }
 
-export function newScanId(now = new Date()): string {
-  const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-  return `${stamp}-${randomUUID().slice(0, 8)}`;
-}
+export { newScanId } from '../utils/scan-id.js';
 
 function worst(a: PageStatus, b: PageStatus): PageStatus {
   if (a === 'failed' || b === 'failed') return 'failed';

@@ -71,7 +71,7 @@ The egress proxy enforces the same per-connection policy as in local mode (see [
    ./scripts/run-scan.sh
    ```
 
-   This starts the proxy (long-running, waits until it is healthy), then runs `scanner` → `analyzer` → `alerter`. Every run gets its own run id, evidence file and proxy event record, and runs are serialised with a lock (`flock`, or a lock directory where `flock` is missing; `THIRDSENTRY_LOCK_WAIT` seconds, default 3600). The per-run files are deleted after a successful analysis; after a failure they are kept (newest `THIRDSENTRY_KEEP_FAILED`, default 10). The exit code is the analyzer's (`0` ok, `1` findings over threshold, `3` incomplete scan). Alert failures are reported but do not change it.
+   This starts the proxy (long-running, waits until it is healthy), then runs `scanner` → `analyzer` → `alerter`. Every run gets its own run id, evidence file and proxy event record, and runs are serialised with a lock (`flock`, or a lock directory where `flock` is missing; `THIRDSENTRY_LOCK_WAIT` seconds, default 3600). The per-run files are deleted after a successful analysis; after a failure they are kept (newest `THIRDSENTRY_KEEP_FAILED`, default 10). The exit code is the analyzer's (`0` ok, `1` findings over threshold, `3` incomplete scan or a site without an approved baseline). The very first run therefore exits `3` until you approve a baseline; add `--allow-missing-baseline` to the analyzer command if you prefer `0` there. Alert failures are reported but do not change it.
 
 ## First baseline and maintenance
 

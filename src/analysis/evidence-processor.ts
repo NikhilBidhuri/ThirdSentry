@@ -191,7 +191,10 @@ function outboundRequests(page: PageEvidence, party: PartyContext, blockedHosts:
         status: req.status,
         failure: req.failure ? redactText(req.failure, 300) : undefined,
         fromServiceWorker: req.fromServiceWorker,
-        blocked: blockedHosts.has(info.hostname) && (req.failure === undefined || isBlockedFailure(req.failure)) && req.status === undefined,
+        // blockedHosts comes from the egress proxy's blocked-connection events. HTTPS
+        // (CONNECT) refusals surface as a failed request without a status; plain
+        // http:// refusals are delivered to the page as the proxy's own 403 response.
+        blocked: blockedHosts.has(info.hostname) && (req.failure === undefined || isBlockedFailure(req.failure)) && (req.status === undefined || req.status === 403),
       }),
     );
   }

@@ -27,10 +27,13 @@ $DC up -d --no-build fixture egress-proxy
 $DC run --rm -T scanner || fail "scanner run failed"
 status=0
 $DC run --rm -T analyzer >/tmp/thirdsentry-verify-analyze.txt 2>&1 || status=$?
-[ "$status" -eq 0 ] || { cat /tmp/thirdsentry-verify-analyze.txt; fail "analyzer exit code $status"; }
+# First run: no baseline yet, so nothing was compared. That must not look like
+# success (exit 0); it is reported as incomplete (exit 3) with first-run guidance.
+[ "$status" -eq 3 ] || { cat /tmp/thirdsentry-verify-analyze.txt; fail "analyzer exit code $status on a first run without baseline (expected 3)"; }
+grep -q "No approved baseline" /tmp/thirdsentry-verify-analyze.txt || fail "no first-run guidance for the missing baseline"
 grep -q "complete" /tmp/thirdsentry-verify-analyze.txt || fail "scan not complete"
 grep -q "vendor.js" /tmp/thirdsentry-verify-analyze.txt || fail "vendor.js not discovered"
-pass "pipeline produced a complete scan with the vendor script"
+pass "pipeline produced a complete scan with the vendor script (exit 3: no baseline yet)"
 
 # 1b. Blocked-connection evidence comes from the proxy's record, not from the scanner.
 # Approve the clean scan as baseline, make the page fetch the cloud-metadata
