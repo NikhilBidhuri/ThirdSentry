@@ -59,7 +59,9 @@ afterEach(() => {
 
 describe('drift detection end to end', () => {
   it('first scan without a baseline reports no findings and asks for a baseline', async () => {
-    const r = await cli('scan');
+    const strict = await cli('scan');
+    expect(strict.code).toBe(3); // no baseline: nothing was compared
+    const r = await cli('scan', '--allow-missing-baseline');
     expect(r.code).toBe(0);
     const rep = await report();
     expect(rep.sites[0]?.baseline.exists).toBe(false);

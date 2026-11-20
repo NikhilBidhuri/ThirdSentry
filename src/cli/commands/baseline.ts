@@ -13,18 +13,21 @@ import {
 } from '../../baseline/baseline-manager.js';
 import type { Baseline } from '../../baseline/baseline-schema.js';
 import { loadConfig } from '../../config/loader.js';
+import { assertScanSitesConfigured } from '../../monitoring/analysis-runner.js';
 import { compareSite, type Change } from '../../monitoring/comparison-engine.js';
 import { buildFindings } from '../../monitoring/finding-engine.js';
 import { loadLatestScan, loadScanResult } from '../../storage/filesystem-store.js';
 import type { Finding } from '../../types/findings.js';
 import type { SiteResult } from '../../types/index.js';
-import { BaselineError, ConfigError } from '../../utils/errors.js';
-import { globalOptions } from '../context.js';
+import { BaselineError } from '../../utils/errors.js';
+import { defaultApprover } from '../../utils/identity.js';
+import { globalOptions, selectScanSites } from '../context.js';
 import { color, print, printJson, severityLabel } from '../output.js';
 
 interface BaselineOptions {
   site?: string;
   fromScan?: string;
+  scanId?: string;
   approve?: string;
   keepVariants?: boolean;
   allowPartial?: boolean;
@@ -42,8 +45,19 @@ interface PlannedUpdate {
   readonly approvedFindings: readonly Finding[];
 }
 
-/** Map a finding (via its originating change) to the baseline items it approves. */
+/** Approved hashes of a baseline resource, as reviewed (see ApprovalItem 'remove-resource'). */
+function reviewedHashes(change: Change): string[] {
+  return (change.baseline?.approvedHashes ?? []).map((h) => h.sha256 ?? h.normalizedSha256 ?? 'none');
+}
+
+/**
+ * Map a finding (via its originating change) to the baseline items it
+ * approves. Resource items carry the hash of the reviewed version, so
+ * approving one finding never approves another variant of the same URL.
+ */
 export function approvalItemsFor(change: Change): ApprovalItem[] {
+  const resource = (): ApprovalItem[] =>
+    change.identity && change.current ? [{ kind: 'resource', value: change.identity, sha256: change.current.hashes.sha256 }] : [];
   switch (change.kind) {
     case 'resource-modified':
     case 'resource-formatting-changed':
@@ -52,14 +66,14 @@ export function approvalItemsFor(change: Change): ApprovalItem[] {
     case 'redirect-changed':
     case 'content-unavailable':
     case 'sri-mismatch':
-      return change.identity ? [{ kind: 'resource', value: change.identity }] : [];
+      return resource();
     case 'resource-moved':
       return [
-        ...(change.identity ? [{ kind: 'resource' as const, value: change.identity }] : []),
-        ...(change.details.previousIdentity ? [{ kind: 'remove-resource' as const, value: change.details.previousIdentity }] : []),
+        ...resource(),
+        ...(change.details.previousIdentity ? [{ kind: 'remove-resource' as const, value: change.details.previousIdentity, hashes: reviewedHashes(change) }] : []),
       ];
     case 'resource-removed':
-      return change.identity ? [{ kind: 'remove-resource', value: change.identity }] : [];
+      return change.identity ? [{ kind: 'remove-resource', value: change.identity, hashes: reviewedHashes(change) }] : [];
     case 'new-script-domain':
       return change.domain ? [{ kind: 'script-domain', value: change.domain }] : [];
     case 'new-outbound-domain':
@@ -116,11 +130,12 @@ export function registerBaseline(program: Command): void {
     .description('Approve the scripts and domains from a scan as the expected state (explicit, never automatic)')
     .option('-s, --site <names>', 'only these sites (comma separated)')
     .option('--from-scan <file>', 'scan result to approve (default: the latest scan)')
+    .option('--scan-id <id>', 'refuse unless the scan to approve is this one (the scan ID printed by "thirdsentry diff")')
     .option('--approve <finding-ids>', 'approve only the changes behind these findings (comma separated)')
     .option('--keep-variants', 'keep previously approved versions as well (for vendors that serve several variants)')
     .option('--allow-partial', 'allow approving from an incomplete scan (only complete pages are approved)')
     .option('--reason <text>', 'reason recorded in the approval history')
-    .option('--approved-by <name>', 'name recorded in the approval history')
+    .option('--approved-by <name>', 'name recorded in the approval history (default: git user.name, else the OS user name)')
     .option('--dry-run', 'show what would change without writing')
     .option('-y, --yes', 'do not ask for confirmation (required in non-interactive environments)')
     .action(async (opts: BaselineOptions, command: Command) => {
@@ -128,10 +143,19 @@ export function registerBaseline(program: Command): void {
       const resolved = await loadConfig({ ...(g.config ? { configPath: g.config } : {}) });
       const scanPath = opts.fromScan ? resolve(opts.fromScan) : resolved.paths.latestScan;
       const scan = opts.fromScan ? await loadScanResult(scanPath) : await loadLatestScan(resolved.paths);
-      const names = opts.site?.split(',').map((s) => s.trim()).filter(Boolean);
-      const sites = scan.sites.filter((s) => !names || names.includes(s.name));
-      if (sites.length === 0) throw new ConfigError(`The scan ${scan.scanId} contains none of the requested sites`);
+      // Bind the approval to the scan that was reviewed: a scheduled scan may
+      // have replaced the latest scan since "thirdsentry diff" was run.
+      if (opts.scanId !== undefined && opts.scanId !== scan.scanId) {
+        throw new BaselineError(
+          `The scan to approve is ${scan.scanId}, not ${opts.scanId} (--scan-id). Nothing was approved.`,
+          `A newer scan was saved after your review. Review it with "thirdsentry diff", or approve the scan you reviewed with --from-scan ${opts.fromScan ? '<its file>' : `.thirdsentry/reports/scans/${opts.scanId}.json`}.`,
+        );
+      }
+      assertScanSitesConfigured(resolved, scan.sites.map((s) => s.name), `Scan ${scan.scanId}`);
+      const sites = selectScanSites(resolved, scan, opts.site);
       const requested = new Set((opts.approve ?? '').split(',').map((s) => s.trim()).filter(Boolean));
+      const approvedBy = opts.approvedBy ?? (await defaultApprover(resolved.baseDir));
+      if (!g.json) print(color.gray(`Approving from scan ${scan.scanId} (${scan.startedAt}${opts.fromScan ? `, ${scanPath}` : ', latest scan'})${approvedBy ? ` as ${approvedBy}` : ''}`));
 
       const plans: PlannedUpdate[] = [];
       const matchedIds = new Set<string>();
@@ -140,7 +164,7 @@ export function registerBaseline(program: Command): void {
         const common = {
           scanId: scan.scanId,
           ...(opts.reason ? { reason: opts.reason } : {}),
-          ...(opts.approvedBy ? { approvedBy: opts.approvedBy } : {}),
+          ...(approvedBy ? { approvedBy } : {}),
           ...(opts.keepVariants ? { keepVariants: true } : {}),
         };
         let findings: Finding[] = [];
@@ -185,21 +209,21 @@ export function registerBaseline(program: Command): void {
         throw new BaselineError(`No current finding matches: ${unmatched.join(', ')}`, 'Run "thirdsentry diff" to list current finding IDs.');
       }
       if (plans.length === 0) {
-        if (g.json) printJson({ updated: [] });
+        if (g.json) printJson({ updated: [], scanId: scan.scanId });
         else print('Nothing to approve.');
         return;
       }
 
       if (!g.json) for (const plan of plans) printSummary(plan);
       if (opts.dryRun) {
-        if (g.json) printJson({ dryRun: true, plans: plans.map((p) => ({ site: p.site.name, summary: p.summary })) });
+        if (g.json) printJson({ dryRun: true, scanId: scan.scanId, plans: plans.map((p) => ({ site: p.site.name, summary: p.summary })) });
         return;
       }
       if (!opts.yes) {
         if (!process.stdin.isTTY) {
           throw new BaselineError('Refusing to change baselines without confirmation in a non-interactive session', 'Review the summary and re-run with --yes.');
         }
-        const ok = await confirm(`\nWrite ${plans.length} baseline file(s)? Approved scripts will no longer be reported. [y/N] `);
+        const ok = await confirm(`\nWrite ${plans.length} baseline file(s) from scan ${scan.scanId}? Approved scripts will no longer be reported. [y/N] `);
         if (!ok) {
           print('Aborted. No baseline was changed.');
           return;
@@ -207,9 +231,9 @@ export function registerBaseline(program: Command): void {
       }
       const written: string[] = [];
       for (const plan of plans) written.push(await saveBaseline(resolved.paths, plan.next));
-      if (g.json) printJson({ updated: written, scanId: scan.scanId });
+      if (g.json) printJson({ updated: written, scanId: scan.scanId, ...(approvedBy ? { approvedBy } : {}) });
       else {
-        for (const p of written) print(color.green(`Saved ${p}`));
+        for (const p of written) print(color.green(`Saved ${p} (approved from scan ${scan.scanId})`));
         print(color.gray('Commit the baseline files after review so that the approval is recorded in version control.'));
       }
     });

@@ -1,5 +1,6 @@
 import { formatZodIssues } from '../config/loader.js';
 import { BaselineError } from '../utils/errors.js';
+import { BASELINE_MIGRATIONS, upgradeDocument } from '../storage/migrations.js';
 import { BaselineSchema, type Baseline } from './baseline-schema.js';
 
 /**
@@ -8,7 +9,8 @@ import { BaselineSchema, type Baseline } from './baseline-schema.js';
  * checked before a baseline is trusted for comparison.
  */
 export function validateBaseline(data: unknown, expectedSite: string, source: string): Baseline {
-  const parsed = BaselineSchema.safeParse(data);
+  // Older formats are upgraded in memory; newer ones are refused ("upgrade ThirdSentry").
+  const parsed = BaselineSchema.safeParse(upgradeDocument(BASELINE_MIGRATIONS, data, source));
   if (!parsed.success) {
     throw new BaselineError(`Invalid baseline ${source}:\n${formatZodIssues(parsed.error)}`, 'Fix the file or regenerate it with "thirdsentry baseline".');
   }

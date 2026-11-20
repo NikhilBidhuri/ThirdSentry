@@ -58,13 +58,13 @@ describe('baseline manager', () => {
   it('approves selected items only', () => {
     const initial = createBaseline(site([scriptResource(A, 'v1'), scriptResource(B, 'b1')]), { scanId: 's1' });
     const current = site([scriptResource(A, 'v2'), scriptResource(B, 'b2')]);
-    const next = approveSelected(initial, current, [{ kind: 'resource', value: `url:${A}` }, { kind: 'outbound-domain', value: 'new.example' }], { scanId: 's2' });
+    const next = approveSelected(initial, current, [{ kind: 'resource', value: `url:${A}`, sha256: current.resources[0]?.hashes.sha256 ?? null }, { kind: 'outbound-domain', value: 'new.example' }], { scanId: 's2' });
     const a = next.resources.find((r) => r.identity === `url:${A}`);
     const b = next.resources.find((r) => r.identity === `url:${B}`);
     expect(a?.approvedHashes[0]?.sha256).toBe(current.resources[0]?.hashes.sha256);
     expect(b?.approvedHashes[0]?.sha256).toBe(initial.resources[1]?.approvedHashes[0]?.sha256);
     expect(next.domains.outbound).toContain('new.example');
-    expect(next.approvals.at(-1)?.items).toEqual([`resource:url:${A}`, 'outbound-domain:new.example']);
+    expect(next.approvals.at(-1)?.items).toEqual([`resource:url:${A}@${current.resources[0]?.hashes.sha256}`, 'outbound-domain:new.example']);
   });
 
   it('summarises changes for the confirmation prompt', () => {

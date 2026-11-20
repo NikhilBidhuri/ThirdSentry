@@ -15,7 +15,7 @@ ThirdSentry visits your pages as an anonymous visitor (fresh browser context, no
 | Page errors | up to 20 per page, redacted | scan results | Bearer tokens and JWT-like strings are removed. Console messages are counted, not stored. |
 | CSP headers of scanned pages | stored | scan results | |
 | Blocked connection attempts | stored | scan results | Host, port, reason. |
-| **Script bodies** | **not stored** | `.thirdsentry/cache/content/` | Only with `retention.storeScriptContent: true` (needed for code diffs). Content-addressed, git-ignored. |
+| **Script bodies** | **only some** | `.thirdsentry/cache/content/` | By default (`retention.scriptContent: findings`): bodies of approved versions and of versions behind findings (and, for a site with no baseline yet, all of its scripts, because each awaits approval). Needed for code diffs. `none` stores nothing, `all` stores every body. Content-addressed, git-ignored; may contain proprietary vendor code and any secrets embedded in scripts. |
 | Screenshots | **not taken** | `reports/screenshots/` | Only with `captureScreenshots: true`. Screenshots can show personal data displayed on the page. |
 | Finding/alert state | stored | `state/findings.json` | Finding IDs, timestamps, severities. |
 | Raw worker evidence | transient | temporary directory | Includes captured bodies for hashing; deleted after each scan (process mode) or kept in the evidence volume until the next scan (Docker). |
@@ -36,9 +36,9 @@ ThirdSentry visits your pages as an anonymous visitor (fresh browser context, no
 
 | Setting | Default | Effect |
 | --- | --- | --- |
-| `retention.maxScanReports` | 50 | Older scan results are deleted after each scan. |
+| `retention.maxScanReports` | 50 | Scan results kept **per site**; older ones (and their per-scan report directories) are deleted after each scan. |
 | `retention.maxAgeDays` | 90 | Scan results, screenshots and cached script bodies older than this are deleted after each scan. Cached bodies still referenced by an approved baseline are kept so that future code diffs remain possible. |
-| `retention.storeScriptContent` | false | Whether script bodies are cached at all. |
+| `retention.scriptContent` | `findings` | `none`, `findings` or `all` (see above). The deprecated `storeScriptContent: true/false` still works and means `all`/`none`. Content seen again has its age refreshed, so it only expires after `maxAgeDays` without being observed. Set `none` if you must not keep any third-party code on disk. |
 
 Manual cleanup:
 
