@@ -29,7 +29,9 @@ export type ChangeKind =
   | 'new-outbound-host'
   | 'denylisted-domain'
   | 'iframe-origin-added'
-  | 'iframe-origin-removed';
+  | 'iframe-origin-removed'
+  | 'page-failed'
+  | 'coverage-degraded';
 
 /** A single contribution to a finding's risk score, shown to users verbatim. */
 export interface Signal {

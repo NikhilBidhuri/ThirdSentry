@@ -16,6 +16,7 @@ import type {
 import { compact } from '../utils/object.js';
 import { sha256Hex, sriHash, verifySri } from './hashing.js';
 import { NORMALIZER_VERSION, normalizeJavaScript } from './normalizer.js';
+import { goalForResourceType } from './parser.js';
 import { coverageLimitations } from './coverage.js';
 
 /**
@@ -80,7 +81,7 @@ function buildResource(c: ResourceCandidate, party: PartyContext, contents: Map<
   else if (!isJs) normalization = { status: 'not-javascript' };
   else if (c.contentStatus === 'truncated') normalization = { status: 'unavailable', error: 'content truncated' };
   else {
-    const n = normalizeJavaScript(body.toString('utf8'), { maxChars });
+    const n = normalizeJavaScript(body.toString('utf8'), { maxChars, goal: goalForResourceType(c.type) });
     normalization = compact({ status: n.status, error: n.error });
     normalizedSha = n.normalizedSha256 ?? null;
   }

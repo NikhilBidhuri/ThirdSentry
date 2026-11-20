@@ -51,6 +51,9 @@ export const BrowserOptionsSchema = z
   })
   .strict();
 
+/** Query parameters that only bust caches; ignored when matching resources unless a site overrides the list. */
+export const DEFAULT_IGNORE_QUERY_PARAMS = ['cb', '_', 't', 'ts', 'timestamp', 'cachebust', 'cachebuster', 'nocache', 'rnd', 'rand', 'random'] as const;
+
 export const SiteSchema = z
   .object({
     name: siteName,
@@ -61,8 +64,8 @@ export const SiteSchema = z
     sensitivePages: z.array(z.string().min(1)).default([]),
     /** Additional registrable domains treated as first-party (e.g. your own CDN). */
     firstPartyDomains: z.array(hostPattern).default([]),
-    /** Query parameter names ignored when computing canonical resource identity (e.g. cache busters). */
-    ignoreQueryParams: z.array(z.string().min(1)).default([]),
+    /** Query parameter names ignored when computing canonical resource identity (cache busters by default; set [] to disable). */
+    ignoreQueryParams: z.array(z.string().min(1)).default([...DEFAULT_IGNORE_QUERY_PARAMS]),
     browser: BrowserOptionsSchema.partial().optional(),
     scan: ScanOptionsSchema.partial().optional(),
   })
