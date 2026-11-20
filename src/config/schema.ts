@@ -324,6 +324,32 @@ export const AlertsSchema = z
   })
   .strict();
 
+export const HeartbeatSchema = z
+  .object({
+    /** Ping URL of a push monitor (healthchecks.io, Cronitor, Uptime Kuma). Usually an ${ENV} reference: the URL is a secret. */
+    url: envString.default('${THIRDSENTRY_HEARTBEAT_URL}'),
+    /** Explicit URL for failure pings. Default: `url` + `failPath`. */
+    failUrl: envString.optional(),
+    /** Appended to the URL path for failure pings when failUrl is not set (healthchecks.io convention). Empty string = send no failure ping. */
+    failPath: z.string().max(100).default('/fail'),
+    /** What an incomplete (partial) scan sends: the failure ping, the success ping, or nothing. */
+    onIncomplete: z.enum(['fail', 'success', 'skip']).default('fail'),
+    /** Single attempt, no retries. */
+    timeoutMs: z.number().int().min(500).max(30_000).default(5_000),
+  })
+  .strict();
+
+export const HealthSchema = z
+  .object({
+    /** Raise a `scan-unhealthy` finding after this many consecutive failed (or incomplete) scans of a site. */
+    failureThreshold: z.number().int().min(1).max(1_000).default(3),
+    /** Count incomplete (partial) scans as failures; false counts only scans that failed outright. */
+    countIncomplete: z.boolean().default(true),
+    /** Dead-man's-switch ping, sent by the alert step only. Not configured = no heartbeat. */
+    heartbeat: HeartbeatSchema.optional(),
+  })
+  .strict();
+
 export const ReportingSchema = z
   .object({
     /** Report formats written after each scan. */
@@ -356,6 +382,7 @@ export const ConfigSchema = z
     suppressions: z.array(SuppressionSchema).default([]),
     reporting: ReportingSchema.prefault({}),
     alerts: AlertsSchema.prefault({}),
+    health: HealthSchema.prefault({}),
     /** Default --fail-on threshold for scan/diff (`none` never fails on findings). */
     failOn: z.enum([...SEVERITIES, 'none']).default('high'),
   })
@@ -386,3 +413,5 @@ export type RuleConfig = z.infer<typeof RuleConfigSchema>;
 export type DomainPolicy = z.infer<typeof DomainPolicySchema>;
 export type Suppression = z.infer<typeof SuppressionSchema>;
 export type AlertsConfig = z.infer<typeof AlertsSchema>;
+export type HealthConfig = z.infer<typeof HealthSchema>;
+export type HeartbeatConfig = z.infer<typeof HeartbeatSchema>;

@@ -6,7 +6,9 @@ import { ensureScanReportDir } from '../storage/filesystem-store.js';
 import { assertSiteName, baselinePath } from '../storage/paths.js';
 import { SEVERITY_ORDER, type Finding, type Severity } from '../types/findings.js';
 import type { ScanResult } from '../types/index.js';
-import type { AnalysisReport, SiteComparisonSummary } from '../types/report.js';
+import type { AnalysisReport, ReportHealth, SiteComparisonSummary } from '../types/report.js';
+import { buildHealthFindings } from '../health/health-finding.js';
+import { loadHealthState, recordScanHealth, saveHealthState } from '../health/health-state.js';
 import { ConfigError } from '../utils/errors.js';
 import { ExitCode, type ExitCodeValue } from '../utils/exit-codes.js';
 import { copyFileAtomic, writeJsonAtomic } from '../utils/fs.js';
@@ -147,6 +149,23 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
     });
   }
 
+  // Scan health (shared by `scan` and the container `analyze`): update the streaks and raise the
+  // site-level scan-unhealthy finding. Read-only commands (diff, report) pass updateState: false.
+  let health: ReportHealth | undefined;
+  if (options.updateState) {
+    const policy = resolved.config.health;
+    const healthState = await loadHealthState(resolved.paths, { quarantine: true });
+    const recoveries = recordScanHealth(healthState, scan, policy);
+    await saveHealthState(resolved.paths, healthState);
+    findings.push(...buildHealthFindings(healthState, scan.sites.map((s) => s.name), policy, now));
+    health = {
+      sites: scan.sites.map((s) => {
+        const h = healthState.sites[s.name];
+        return { name: s.name, consecutiveFailures: h?.consecutiveFailures ?? 0, ...(h?.streakStart ? { streakStart: h.streakStart } : {}), ...(h?.lastCompleteAt ? { lastCompleteAt: h.lastCompleteAt } : {}) };
+      }),
+      recoveries,
+    };
+  }
   const suppression = applySuppressions(findings, resolved.config.suppressions, { now, risk: resolved.config.risk });
   for (const e of suppression.expired) {
     getLogger('analysis').warn({ suppression: e.index, expires: e.expires }, `suppression "${e.reason}" has expired and no longer applies`);
@@ -176,8 +195,10 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
     findingCounts: countBy(sorted),
     highestSeverity: highestSeverity(sorted),
     coverageLimitations: scan.coverageLimitations,
+    ...(health ? { health } : {}),
   };
-  return { report: { ...base, headline: headline(base) }, comparisons };
+  const recoveryNotes = (health?.recoveries ?? []).map((r) => `Recovered: scanning of ${r.site} works again after ${r.failures} failed scans (since ${r.since}).`);
+  return { report: { ...base, headline: [headline(base), ...recoveryNotes].filter(Boolean).join(' ') }, comparisons };
 }
 
 export function reportJsonPath(resolved: ResolvedConfig): string {

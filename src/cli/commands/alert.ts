@@ -2,6 +2,8 @@ import { resolve } from 'node:path';
 import type { Command } from 'commander';
 import { CHANNELS, sendAlerts, type AlertRunResult, type ChannelName } from '../../alerts/alert-manager.js';
 import { loadConfig } from '../../config/loader.js';
+import { recordAlertHealth } from '../../health/run-health.js';
+import { sendRunHeartbeat } from '../../health/heartbeat.js';
 import { reportJsonPath } from '../../monitoring/analysis-runner.js';
 import type { AnalysisReport } from '../../types/report.js';
 import { ConfigError, ThirdSentryError } from '../../utils/errors.js';
@@ -15,6 +17,7 @@ interface AlertOptions {
   channel?: string;
   dryRun?: boolean;
   test?: boolean;
+  heartbeat?: boolean;
 }
 
 const NO_CHANNEL = 'no alert channel is enabled (set alerts.<slack|webhook|github|email>.enabled: true in thirdsentry.yml)';
@@ -61,6 +64,7 @@ export function registerAlert(program: Command): void {
     .option('--channel <names>', `only these channels (${CHANNELS.join(', ')})`)
     .option('--dry-run', 'show what would be sent without sending')
     .option('--test', 'send a clearly-labelled test alert through each enabled channel (no report needed; alert state is not changed)')
+    .option('--no-heartbeat', 'do not send the health.heartbeat ping')
     .action(async (opts: AlertOptions, command: Command) => {
       const g = globalOptions(command);
       const resolved = await loadConfig({ ...(g.config ? { configPath: g.config } : {}) });
@@ -73,9 +77,13 @@ export function registerAlert(program: Command): void {
         ...(opts.dryRun ? { dryRun: true } : {}),
         ...(opts.test ? { test: true } : {}),
       });
-      if (g.json) printJson(result);
+      const alertFailed = result.results.some((r) => !r.ok);
+      await recordAlertHealth(resolved, result);
+      // Dead-man's switch: only after a real run (not --test / --dry-run), by the component that has network access.
+      const heartbeat = report && !opts.dryRun && opts.heartbeat !== false ? await sendRunHeartbeat(resolved.config.health.heartbeat, report, { alertFailed }) : undefined;
+      if (g.json) printJson(heartbeat ? { ...result, heartbeat } : result);
       else printAlertResult(result);
-      if (result.results.some((r) => !r.ok)) process.exitCode = ExitCode.InternalError;
+      if (alertFailed) process.exitCode = ExitCode.InternalError;
       // A test with nothing to test is a failed check.
       else if (opts.test && result.channels.length === 0) process.exitCode = ExitCode.ConfigError;
     });

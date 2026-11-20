@@ -9,3 +9,12 @@
 
 # Weekly cleanup of old reports and cached content (retention settings in thirdsentry.yml):
 # 30 3 * * 0 cd /opt/thirdsentry && docker compose run --rm tools cleanup >> /var/log/thirdsentry/cleanup.log 2>&1
+
+# Metrics for the node_exporter textfile collector (docs/monitoring.md). Re-render a few
+# minutes after each scan; the write is atomic. The directory must be writable by the
+# user (or uid 1001 in Docker) and match node_exporter --collector.textfile.directory.
+# 15 */6 * * * cd /opt/thirdsentry && docker compose run --rm -v /var/lib/node_exporter/textfile:/textfile tools metrics --textfile /textfile/thirdsentry.prom >> /var/log/thirdsentry/metrics.log 2>&1
+# Without Docker:
+# 15 */6 * * * cd /srv/monitoring && npx thirdsentry metrics --textfile /var/lib/node_exporter/textfile/thirdsentry.prom
+# Optional: a status check that exits non-zero when scanning is unhealthy (feeds your own cron mail/monitoring):
+# 20 * * * * cd /srv/monitoring && npx thirdsentry status --max-age 12 >/dev/null || echo "ThirdSentry is unhealthy" | mail -s ThirdSentry ops@example.com

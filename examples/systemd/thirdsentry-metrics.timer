@@ -1,0 +1,13 @@
+# /etc/systemd/system/thirdsentry-metrics.timer
+# Enable with: systemctl enable --now thirdsentry-metrics.timer
+# Every 5 minutes, so thirdsentry_last_scan_timestamp_seconds stays current; the
+# values only change when a scan ran, so a short interval is cheap.
+[Unit]
+Description=Render ThirdSentry metrics
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

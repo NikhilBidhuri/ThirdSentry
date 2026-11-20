@@ -10,6 +10,8 @@
 #   analyzer      NO network at all; validates evidence, compares with read-only baselines,
 #                 takes connection events from the proxy's record (read-only), writes reports
 #   alerter       only container that receives alert credentials (.env); reads reports
+#   metrics       optional (profile "metrics"): read-only Prometheus exporter on 127.0.0.1:9464,
+#                 no credentials, read-only volumes, no outbound route (see docs/monitoring.md)
 #
 # Images (one Dockerfile, two targets; see Dockerfile):
 #   thirdsentry:slim   Node.js only (~400 MB): egress-proxy, analyzer, alerter, tools
@@ -125,6 +127,30 @@ services:
     mem_limit: 256m
     pids_limit: 64
 
+  # Optional Prometheus exporter (docs/monitoring.md): docker compose --profile metrics up -d metrics
+  # Serves /metrics and /healthz from the report and health files, read-only and without
+  # authentication. The only way in is the port published on the HOST'S LOOPBACK; the
+  # network below has no outbound route (masquerading off) and nothing else is attached.
+  metrics:
+    <<: *slim
+    profiles: [metrics]
+    command: ["--config", "/work/thirdsentry.yml", "metrics", "--serve", "0.0.0.0:9464"]
+    ports:
+      - "127.0.0.1:${THIRDSENTRY_METRICS_PORT:-9464}:9464"
+    volumes:
+      - *config-volume
+      - reports:/work/.thirdsentry/reports:ro
+      - state:/work/.thirdsentry/state:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9464/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [metrics]
+    mem_limit: 128m
+    pids_limit: 64
+    restart: unless-stopped
+
   # Maintenance commands (baseline, diff, report, cleanup). No network.
   # Example: docker compose run --rm tools baseline
   tools:
@@ -147,6 +173,10 @@ volumes:
   cache:
 
 networks:
+  # Only for the optional metrics exporter: a published port works, but nothing can leave.
+  metrics:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
   # internal: true = no route to the internet or the host network.
   scan-internal:
     internal: true

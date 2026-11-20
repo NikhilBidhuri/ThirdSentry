@@ -7,6 +7,8 @@ import { analysisExitCode, analyzeScan, missingBaselineNotice, publishReports } 
 import { parseFormats } from '../../reporting/index.js';
 import { sendAlerts, type AlertRunResult } from '../../alerts/alert-manager.js';
 import { getLogger } from '../../utils/logger.js';
+import { sendRunHeartbeat } from '../../health/heartbeat.js';
+import { recordAlertHealth } from '../../health/run-health.js';
 import { printAlertResult } from './alert.js';
 import { globalOptions, logLevelFor } from '../context.js';
 import { parseFailOn } from '../fail-on.js';
@@ -22,6 +24,7 @@ export interface ScanCommandOptions {
   skipPreflight?: boolean;
   allowMissingBaseline?: boolean;
   failOnAlertError?: boolean;
+  heartbeat?: boolean;
 }
 
 /** Indicators shown in the default resource list (others appear with --verbose). */
@@ -80,6 +83,7 @@ export function registerScan(program: Command): void {
     .option('--skip-preflight', 'skip DNS pre-flight checks (connections are still validated by the egress proxy)')
     .option('--allow-missing-baseline', 'exit 0 instead of 3 when a scanned site has no baseline yet')
     .option('--fail-on-alert-error', 'exit with code 4 if an alert could not be delivered')
+    .option('--no-heartbeat', 'do not send the health.heartbeat ping')
     .action(async (opts: ScanCommandOptions, command: Command) => {
       const g = globalOptions(command);
       const resolved = await loadConfig({ ...(g.config ? { configPath: g.config } : {}) });
@@ -99,13 +103,16 @@ export function registerScan(program: Command): void {
         try {
           alertResult = await sendAlerts(resolved, report, perScan.html ? { reportLocation: perScan.html } : {});
           alertFailed = alertResult.results.some((r) => !r.ok);
+          await recordAlertHealth(resolved, alertResult);
         } catch (error) {
           // Alerting must never destroy or invalidate scan results.
           alertFailed = true;
           getLogger('alerts').error({ err: error instanceof Error ? error.message : String(error) }, 'alerting failed; scan results and reports were saved');
         }
       }
-      if (g.json) printJson({ scan: run.result, report, reports: written, scanReportDir, alerts: alertResult, ...(alertFailed ? { alertFailed } : {}) });
+      // Dead-man's switch (this process has network access and credentials because alerts are enabled).
+      const heartbeat = opts.alerts !== false && opts.heartbeat !== false ? await sendRunHeartbeat(resolved.config.health.heartbeat, report, { alertFailed }) : undefined;
+      if (g.json) printJson({ scan: run.result, report, reports: written, scanReportDir, alerts: alertResult, ...(heartbeat ? { heartbeat } : {}), ...(alertFailed ? { alertFailed } : {}) });
       else {
         printScanSummary(run.result, g.verbose === true);
         printReport(report, g.verbose === true);

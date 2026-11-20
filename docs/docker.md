@@ -99,11 +99,17 @@ docker compose run --rm --entrypoint sh tools -c 'cat /work/.thirdsentry/reports
 | `THIRDSENTRY_PROJECT_DIR` | host (compose) | Directory with `thirdsentry.yml` and `.thirdsentry/baselines`. Default `./examples/project`. |
 | `THIRDSENTRY_RUN_ID` | host (compose) | Names the run's evidence file and proxy event record. Set by `run-scan.sh`; default `manual`. |
 | `COMPOSE` | host (`run-scan.sh`) | Override the compose command (default `docker compose`). |
+| `THIRDSENTRY_METRICS_PORT` | host (compose) | Host port of the optional `metrics` service (bound to `127.0.0.1`). Default `9464`. |
+| `THIRDSENTRY_HEARTBEAT_URL` | `.env` (alerter only) | Ping URL for `health.heartbeat`. It is a secret; keep it out of `thirdsentry.yml`. |
 | Alert variables | `.env` (alerter only) | See [alerts.md](alerts.md#environment-variables). |
 
 ## Scheduling
 
 See [cron.md](cron.md) for cron and systemd timers.
+
+## Metrics (optional)
+
+`docker compose --profile metrics up -d metrics` starts a read-only Prometheus exporter (`thirdsentry metrics --serve`) in the slim image. It mounts the configuration, `reports` and `state` read-only, receives no credentials, and is attached only to a dedicated network with outbound masquerading disabled; its single port is published on the host's loopback (`127.0.0.1:9464`). The exporter has no authentication, so do not publish it on another address without a reverse proxy. For batch jobs the textfile collector is the recommended mode: `docker compose run --rm -v /var/lib/node_exporter/textfile:/textfile tools metrics --textfile /textfile/thirdsentry.prom`. The heartbeat ping (dead-man's switch) is sent by the `alerter` container, the only one with network access and credentials. See [monitoring.md](monitoring.md).
 
 ## Verifying the isolation
 

@@ -36,6 +36,20 @@ journalctl -u thirdsentry.service
 
 The service treats exit codes `1` and `3` as success (`SuccessExitStatus=1 3`), because they are expected outcomes rather than service failures; findings are delivered by alerts. `RandomizedDelaySec` spreads load, and `Persistent=true` runs a missed scan after downtime.
 
+## Knowing when scans stop working
+
+A cron job that stops, or a scan that fails every time, produces no findings and no noise. Three things catch this (details in [monitoring.md](monitoring.md)):
+
+- **Failure streaks:** after `health.failureThreshold` (default 3) failed or incomplete scans in a row, the report gets a `scan-unhealthy` finding that is alerted like any other.
+- **Heartbeat:** set `health.heartbeat.url: ${THIRDSENTRY_HEARTBEAT_URL}` (healthchecks.io, Cronitor, Uptime Kuma) and the alerting step pings it after each run; a missing ping raises the alarm. Set the schedule and grace time of the monitor to match your cron interval.
+- **Metrics:** write a Prometheus textfile after each scan and alert on `thirdsentry_last_complete_scan_timestamp_seconds`:
+
+```cron
+15 */6 * * * cd /srv/monitoring && npx thirdsentry metrics --textfile /var/lib/node_exporter/textfile/thirdsentry.prom
+```
+
+`examples/cron/crontab` has the Docker variant, and `examples/systemd/thirdsentry-metrics.service` / `.timer` do the same with systemd. `thirdsentry status --max-age 12` exits non-zero when scanning is unhealthy, for scripts.
+
 ## Retention
 
 Each run writes a scan result. Old results, screenshots and cached script content are removed according to `retention.maxScanReports` and `retention.maxAgeDays` after every scan. To clean up manually:
