@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import type { Command } from 'commander';
 import { loadBaseline } from '../../baseline/baseline-manager.js';
 import { loadConfig, type ResolvedConfig } from '../../config/loader.js';
+import { applyPoliciesToBaseline, applyPoliciesToSite } from '../../policies/apply.js';
 import { buildInventory, checkFailures, loadInventory, looksLikeIdentity, REQUIRED_JUSTIFICATION_FIELDS, saveInventoryEdit, type InventoryEntry, type InventoryRow } from '../../pci/inventory.js';
 import { EXPORT_FORMATS, formatInventory, type ExportFormat } from '../../pci/inventory-export.js';
 import { loadLatestScan, loadScanResult } from '../../storage/filesystem-store.js';
@@ -61,7 +62,14 @@ async function runList(opts: ListOptions, command: Command): Promise<void> {
   const unmatched: InventoryEntry[] = [];
   for (const site of sites) {
     const [baseline, inventory] = await Promise.all([loadBaseline(resolved.paths, site.name), loadInventory(resolved.paths, site.name)]);
-    const result = buildInventory({ site, baseline, entries: inventory.entries });
+    // Same view as the analysis: scripts governed by a script policy are one row under the
+    // policy identity (a renamed bundle stays approved and keeps its inventory status).
+    const now = new Date();
+    const result = buildInventory({
+      site: applyPoliciesToSite(site, resolved.config, now),
+      baseline: baseline ? applyPoliciesToBaseline(baseline, resolved.config, now) : undefined,
+      entries: inventory.entries,
+    });
     all.push(...result.rows);
     unmatched.push(...result.unmatchedEntries);
     const unsure = site.pages.filter((p) => p.sensitive && p.status !== 'complete');

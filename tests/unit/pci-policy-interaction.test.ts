@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import { createBaseline, saveBaseline } from '../../src/baseline/baseline-manager.js';
+import { main } from '../../src/cli/index.js';
 import { analyzeScan } from '../../src/monitoring/analysis-runner.js';
+import { applyPoliciesToSite } from '../../src/policies/apply.js';
+import { saveScanResult } from '../../src/storage/filesystem-store.js';
 import { page, scan, scriptResource, site } from '../fixtures/builders.js';
 import { makeProject } from '../helpers.js';
 
@@ -26,6 +31,37 @@ describe('PCI inventory and script policies', () => {
       const second = await idsOf('main.bbbb2222.js');
       expect(first).toHaveLength(1);
       expect(second).toEqual(first);
+    } finally {
+      await project.cleanup();
+    }
+  });
+
+  it('the inventory command shows a renamed, policy-approved bundle as approved', async () => {
+    const project = await makeProject(80, {
+      scriptPolicies: [{ name: 'vendor-sdk', match: { urlPrefix: 'https://cdn.vendor.example/sdk/' }, mode: 'path-versions', reason: 'hash-named bundles' }],
+    });
+    try {
+      const checkout = page('/checkout', { sensitive: true });
+      const siteWith = (file: string) => site([scriptResource(`https://cdn.vendor.example/sdk/${file}`, 'window.Sdk={}', { pages: ['/checkout'] })], { pages: [checkout] });
+      // Approve the first build (under the policy identity), then scan a renamed build.
+      await saveBaseline(project.resolved.paths, createBaseline(applyPoliciesToSite(siteWith('main.aaaa1111.js'), project.resolved.config, new Date()), { scanId: 'base' }));
+      await saveScanResult(project.resolved.paths, scan([siteWith('main.bbbb2222.js')], '20260102T000000Z-test0002'), { updateLatest: true });
+
+      const chunks: string[] = [];
+      const spy = vi.spyOn(process.stdout, 'write').mockImplementation((c: string | Uint8Array) => {
+        chunks.push(typeof c === 'string' ? c : Buffer.from(c).toString());
+        return true;
+      });
+      try {
+        await main(['node', 'thirdsentry', '--config', join(project.dir, 'thirdsentry.yml'), 'inventory', '--format', 'json']);
+      } finally {
+        spy.mockRestore();
+        process.exitCode = undefined;
+      }
+      const rows = (JSON.parse(chunks.join('')) as { rows: Array<{ identity: string; approval: string }> }).rows;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.identity).toBe('policy:vendor-sdk');
+      expect(rows[0]?.approval).toBe('approved');
     } finally {
       await project.cleanup();
     }
