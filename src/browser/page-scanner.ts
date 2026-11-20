@@ -10,6 +10,7 @@ import type { BrowserProfile } from './browser-profiles.js';
 import { base64Length, clampUrl, effectiveScanBudget, jsonSize, ScanEvidenceBudget, type PageEvidenceBudget } from './evidence-budget.js';
 import { buildInitScript, SNAPSHOT_SCRIPT } from './init-script.js';
 import { NetworkCollector, withTimeout } from './network-collector.js';
+import { captureFormSnapshot } from './form-snapshot.js';
 import { ResourceCollector } from './resource-collector.js';
 
 export interface PageScanRequest {
@@ -205,6 +206,9 @@ export async function scanPage(request: PageScanRequest): Promise<PageEvidence> 
       if (snap.scriptsDropped > 0) resources.scriptsDropped += snap.scriptsDropped;
     }
 
+    // PCI DSS 11.6.1: structure of the forms on sensitive pages (see form-snapshot.ts).
+    const formSnapshot = request.page.sensitive && state.status !== 'failed' ? await captureFormSnapshot(page, Math.min(request.deadline, Date.now() + 10_000)) : undefined;
+
     // --- Optional screenshot ---------------------------------------------
     let screenshotBase64: string | undefined;
     if (scan.captureScreenshots && state.status !== 'failed') {
@@ -284,6 +288,7 @@ export async function scanPage(request: PageScanRequest): Promise<PageEvidence> 
       consoleErrors,
       pageErrors,
       screenshotBase64,
+      formSnapshot,
       dropped,
       evidenceBytes: budget.used,
     });

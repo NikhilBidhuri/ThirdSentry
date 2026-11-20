@@ -1,5 +1,8 @@
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { loadBaseline } from '../baseline/baseline-manager.js';
+import type { Baseline } from '../baseline/baseline-schema.js';
+import { buildInventory, loadInventory } from '../pci/inventory.js';
+import { inventoryFindings, pciSectionFor } from '../pci/inventory-findings.js';
 import type { ResolvedConfig } from '../config/loader.js';
 import { loadLibraryDb } from '../analysis/libraries/vulndb.js';
 import { writeReports, type ReportFormat, type WrittenReports } from '../reporting/index.js';
@@ -7,7 +10,7 @@ import { ensureScanReportDir } from '../storage/filesystem-store.js';
 import { assertSiteName, baselinePath } from '../storage/paths.js';
 import { SEVERITY_ORDER, type Finding, type Severity } from '../types/findings.js';
 import type { ScanResult } from '../types/index.js';
-import type { AnalysisReport, ReportHealth, SiteComparisonSummary } from '../types/report.js';
+import type { AnalysisReport, PciReportSection, ReportHealth, SiteComparisonSummary } from '../types/report.js';
 import { buildHealthFindings } from '../health/health-finding.js';
 import { loadHealthState, recordScanHealth, saveHealthState } from '../health/health-state.js';
 import { ConfigError } from '../utils/errors.js';
@@ -106,11 +109,13 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
   const libraryConfig = resolved.config.libraries;
   const libraryDb = libraryConfig.detect ? await loadLibraryDb(resolved.paths.cache, { now, maxAgeDays: libraryConfig.maxDbAgeDays }) : undefined;
   for (const w of libraryDb?.info.warnings ?? []) if (libraryDb?.info.source === 'cache' || libraryDb?.info.stale) getLogger('analysis').warn(w);
+  const baselines = new Map<string, Baseline | undefined>();
 
   for (const site of scan.sites) {
     const libraryFindings = libraryDb ? buildLibraryFindings(site, { db: libraryDb, libraries: libraryConfig, risk: resolved.config.risk, now }) : [];
     findings.push(...libraryFindings);
     const baseline = await loadBaseline(resolved.paths, site.name);
+    baselines.set(site.name, baseline);
     const path = relative(resolved.baseDir, baselinePath(resolved.paths, site.name)) || baselinePath(resolved.paths, site.name);
     if (!baseline) {
       policyUsage.push(usageWithoutBaseline(site, resolved.config, now));
@@ -181,6 +186,17 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
       recoveries,
     };
   }
+
+  // PCI DSS 6.4.3: script inventory (only when the site has an inventory file or justification is required).
+  const pciSites: PciReportSection['sites'][number][] = [];
+  for (const site of scan.sites) {
+    const inventory = await loadInventory(resolved.paths, site.name);
+    if (!inventory.exists && !resolved.config.pci.requireJustification) continue;
+    const result = buildInventory({ site, baseline: baselines.get(site.name), entries: inventory.entries, now });
+    pciSites.push(pciSectionFor(site.name, result, { path: relative(resolved.baseDir, inventory.path) || inventory.path, exists: inventory.exists }));
+    if (resolved.config.pci.requireJustification) findings.push(...inventoryFindings(result, { risk: resolved.config.risk, now }));
+  }
+
   const suppression = applySuppressions(findings, resolved.config.suppressions, { now, risk: resolved.config.risk });
   for (const e of suppression.expired) {
     getLogger('analysis').warn({ suppression: e.index, expires: e.expires }, `suppression "${e.reason}" has expired and no longer applies`);
@@ -218,6 +234,7 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
     ...(health ? { health } : {}),
     ...(policies ? { policies } : {}),
     ...(libraryReport ? { libraries: libraryReport } : {}),
+    ...(pciSites.length > 0 ? { pci: { requireJustification: resolved.config.pci.requireJustification, sites: pciSites } } : {}),
   };
   const recoveryNotes = (health?.recoveries ?? []).map((r) => `Recovered: scanning of ${r.site} works again after ${r.failures} failed scans (since ${r.since}).`);
   return { report: { ...base, headline: [headline(base), ...recoveryNotes].filter(Boolean).join(' ') }, comparisons };

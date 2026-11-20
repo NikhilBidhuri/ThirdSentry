@@ -2,6 +2,8 @@ import type { ResolvedSite } from '../config/loader.js';
 import { discoverPageResources, iframeOrigins, type ResourceCandidate } from '../discovery/index.js';
 import { classifyParty, hostInfo, partyContextFor, type PartyContext } from '../discovery/resource-classifier.js';
 import { resourceKey } from '../discovery/resource-identity.js';
+import { fingerprintForms } from '../pci/form-fingerprint.js';
+import { extractSecurityHeaders } from '../pci/security-headers.js';
 import { redactText, redactUrl } from '../security/redaction.js';
 import type { PageEvidence, ProxyEvent, ScanEvidence, SiteEvidence } from '../types/evidence.js';
 import type {
@@ -289,6 +291,9 @@ function processSite(
         pageErrors: page.pageErrors.slice(0, 20),
         cspHeaders: page.cspHeaders,
         cspReportOnlyHeaders: page.cspReportOnlyHeaders,
+        securityHeaders: page.status !== 'failed' && page.documentStatus !== undefined ? extractSecurityHeaders(page.documentHeaders, page.cspHeaders, page.cspReportOnlyHeaders) : undefined,
+        formFingerprint: fingerprintForms(page.formSnapshot),
+        formSnapshotFailed: page.formSnapshot?.status === 'failed' ? true : undefined,
         screenshot,
       }),
     );

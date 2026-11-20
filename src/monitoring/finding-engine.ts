@@ -10,6 +10,7 @@ import type { Confidence, Evidence, Finding, Signal } from '../types/findings.js
 import type { SiteResult } from '../types/index.js';
 import { escalatePolicyUpdate, pinMismatchTemplate, policyEvidence, policyReasonSuffix, policyUpdateTemplate, significantPolicyBehaviour } from '../policies/finding-hooks.js';
 import type { Change } from './comparison-engine.js';
+import { pciTemplate } from '../pci/pci-templates.js';
 
 /**
  * Turns raw changes into findings that ordinary developers can act on:
@@ -129,6 +130,9 @@ function template(c: Change, ctx: FindingContext, sensitive: boolean): Template 
   const where = sensitive ? ' on a sensitive page' : '';
   const signals: Signal[] = [];
   if (sensitive) signals.push(s('sensitive-page'));
+
+  const pci = pciTemplate(c, sensitive, risk);
+  if (pci) return pci;
 
   switch (c.kind) {
     case 'resource-modified': {
@@ -369,12 +373,12 @@ export function buildFindings(changes: readonly Change[], ctx: FindingContext): 
     const r = c.current;
     const currentHash = r?.hashes.sha256 ?? null;
     const coverage = c.kind === 'page-failed' || c.kind === 'coverage-degraded';
-    const subject = c.identity ?? c.domain ?? c.origin ?? c.host ?? (coverage ? c.pages[0] : undefined) ?? '';
+    const subject = c.pci?.subject ?? c.identity ?? c.domain ?? c.origin ?? c.host ?? (coverage ? c.pages[0] : undefined) ?? '';
     // The host distinguishes findings that share a domain (a.evil.test vs b.evil.test). A
     // new-outbound-domain finding is per domain (its host is just the first one seen), so it is excluded.
     const hostPart = c.kind === 'new-outbound-domain' ? undefined : c.host;
     // Extra parts are appended only for coverage kinds so the IDs of every other kind keep their old format.
-    const id = fingerprint([ctx.site.name, c.kind, subject, hostPart, currentHash, c.details.currentFinalUrl, ...(coverage ? [c.details.reason] : [])]);
+    const id = fingerprint([ctx.site.name, c.kind, subject, hostPart, currentHash, c.details.currentFinalUrl, ...(coverage ? [c.details.reason] : []), ...(c.pci ? [c.pci.idPart] : [])]);
     const resourceUrl = r?.finalUrl ?? r?.originalUrl ?? c.baseline?.finalUrl ?? c.baseline?.originalUrl;
     const domain = c.domain ?? r?.registrableDomain ?? c.baseline?.registrableDomain;
     const finding: Finding = {

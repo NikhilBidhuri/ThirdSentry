@@ -41,6 +41,10 @@ const KIND_DESCRIPTIONS: Record<string, string> = {
   'policy-accepted-update': 'A script covered by a script policy changed; the policy accepts new versions (new behaviour is still reported).',
   'pinned-hash-mismatch': 'A pinned script does not match any of its allowed hashes.',
   'vulnerable-library': 'A JavaScript library with known vulnerabilities (CVE) is loaded.',
+  'security-header-changed': 'A security-relevant HTTP response header of a page changed (PCI DSS 11.6.1).',
+  'payment-form-changed': 'The structure of a payment form changed: action, method or card input fields (PCI DSS 11.6.1).',
+  'security-baseline-missing': 'No approved security headers or form structure are recorded yet for some pages.',
+  'script-unjustified': 'A script on a payment page has no documented justification or its review is overdue (PCI DSS 6.4.3).',
 };
 
 export interface SarifOptions {

@@ -219,6 +219,15 @@ A list of documented suppressions. Each entry needs a `reason` and at least one 
 
 Explicit per-script policies for vendors whose scripts rotate; allowed globally and in `sites[].scriptPolicies`. Each entry has `name`, `match` (`url`, `urlPrefix`, `glob`, `identity`, `host`, `domain`, optional `pages`), `mode` (`pin`, `path-versions`, `domain-only`), a required `reason`, and optional `expires` and `owner`; `pin` also needs `hashes`. Inline, blob and data matchers are rejected. Policies never auto-apply to other registrable domains. See [policies.md](policies.md).
 
+## `pci`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `requireJustification` | `false` | Report scripts on sensitive pages without a documented justification (or with an overdue review) as info/low `script-unjustified` findings (PCI DSS 6.4.3). The `inventory` report section appears whenever an inventory file exists or this is on. |
+| `reviewIntervalDays` | `365` | Default `reviewBy` offset used by `thirdsentry inventory add` when `--review-by` is omitted. |
+
+See [pci.md](pci.md).
+
 ## `reporting`
 
 | Key | Default | Description |

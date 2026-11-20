@@ -36,7 +36,12 @@ export type ChangeKind =
   | 'scan-unhealthy'
   | 'policy-accepted-update'
   | 'pinned-hash-mismatch'
-  | 'vulnerable-library';
+  | 'vulnerable-library'
+  // PCI DSS support (docs/pci.md)
+  | 'security-header-changed'
+  | 'payment-form-changed'
+  | 'security-baseline-missing'
+  | 'script-unjustified';
 
 /** A single contribution to a finding's risk score, shown to users verbatim. */
 export interface Signal {

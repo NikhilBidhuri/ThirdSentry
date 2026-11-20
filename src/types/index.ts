@@ -1,4 +1,5 @@
 import type { Issue, PageStatus, ProxyEvent } from './evidence.js';
+import type { FormFingerprint } from '../pci/form-fingerprint.js';
 
 export type { Issue, PageStatus, ProxyEvent } from './evidence.js';
 
@@ -170,6 +171,12 @@ export interface PageResult {
   readonly pageErrors: readonly string[];
   readonly cspHeaders: readonly string[];
   readonly cspReportOnlyHeaders: readonly string[];
+  /** Normalised security-relevant document headers (PCI DSS 11.6.1). Absent when the document response was not observed. */
+  readonly securityHeaders?: Readonly<Record<string, string>>;
+  /** Canonical form structure of a sensitive page (absent on other pages or when the snapshot failed). */
+  readonly formFingerprint?: FormFingerprint;
+  /** True when a form snapshot was requested for this sensitive page but could not be taken. */
+  readonly formSnapshotFailed?: boolean;
   readonly screenshot?: string;
 }
 

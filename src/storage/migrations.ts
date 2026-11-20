@@ -59,8 +59,15 @@ export function upgradeDocument(registry: MigrationRegistry, data: unknown, sour
   return doc;
 }
 
-/** Baselines: version 1 is the first released format. */
-export const BASELINE_MIGRATIONS: MigrationRegistry = { name: 'baseline', current: BASELINE_SCHEMA_VERSION, migrations: {} };
+/**
+ * Baselines: version 1 is the first released format. Version 2 adds the optional
+ * `pageSecurity` map; a version 1 document is valid as is (no entry = nothing approved yet).
+ */
+export const BASELINE_MIGRATIONS: MigrationRegistry = {
+  name: 'baseline',
+  current: BASELINE_SCHEMA_VERSION,
+  migrations: { 1: (doc) => ({ ...doc }) },
+};
 
 /** Scan results: version 1 is the first released format. */
 export const SCAN_RESULT_MIGRATIONS: MigrationRegistry = { name: 'scan result', current: 1, migrations: {} };

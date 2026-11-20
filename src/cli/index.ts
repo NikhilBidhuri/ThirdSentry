@@ -10,6 +10,7 @@ import { registerReport } from './commands/report.js';
 import { registerAlert } from './commands/alert.js';
 import { registerPipeline } from './commands/pipeline.js';
 import { registerCspLint } from './commands/csp-lint.js';
+import { registerInventory } from './commands/inventory.js';
 import { registerCleanup } from './commands/cleanup.js';
 import { registerMetrics } from './commands/metrics.js';
 import { registerStatus } from './commands/status.js';
@@ -41,6 +42,7 @@ export function buildProgram(): Command {
   registerReport(program);
   registerAlert(program);
   registerCspLint(program);
+  registerInventory(program);
   registerCleanup(program);
   registerVulnDb(program);
   registerPipeline(program);

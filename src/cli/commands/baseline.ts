@@ -89,6 +89,12 @@ export function approvalItemsFor(change: Change): ApprovalItem[] {
       return change.origin ? [{ kind: 'iframe-origin', value: change.origin }] : [];
     case 'iframe-origin-removed':
       return change.origin ? [{ kind: 'remove-iframe-origin', value: change.origin }] : [];
+    case 'security-header-changed':
+      return change.pages.map((page) => ({ kind: 'page-security' as const, value: page, part: 'headers' as const }));
+    case 'payment-form-changed':
+      return change.pages.map((page) => ({ kind: 'page-security' as const, value: page, part: 'forms' as const }));
+    case 'security-baseline-missing':
+      return (change.pci?.pending ?? []).map((p) => ({ kind: 'page-security' as const, value: p.page, part: p.part }));
     default:
       return [];
   }
@@ -109,6 +115,7 @@ function printSummary(plan: PlannedUpdate): void {
   list('- no longer approved', s.removedResources, color.red);
   list('+ newly approved domains', s.addedDomains, color.green);
   list('- domains no longer approved', s.removedDomains, color.red);
+  list('~ security headers / forms (re)approved on pages', s.securityChangedPages, color.yellow);
   const risky = plan.approvedFindings.filter((f) => f.severity === 'high' || f.severity === 'critical' || f.category === 'suspicious');
   if (risky.length > 0) {
     print(color.red(`  ! You are approving ${risky.length} high-priority or suspicious finding(s):`));

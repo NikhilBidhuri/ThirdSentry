@@ -278,6 +278,17 @@ risk:
     hash-changed-third-party: 30
 ```
 
+## PCI related finding kinds
+
+| Kind | Meaning | Typical severity |
+| --- | --- | --- |
+| `security-header-changed` | A security-relevant document header (CSP, HSTS, X-Frame-Options, ...) differs from the approved baseline. Weakened headers add their weight (and `sensitive-page`); strengthened-only changes are info. | CSP weakened on a payment page: high; header removed: medium to high; strengthened: info |
+| `payment-form-changed` | The form structure of a sensitive page changed: new payment form or card input, re-targeted action, removed/renamed card field. Order and formatting changes are ignored. | action origin changed or new card input: high/critical; removed/renamed card field: medium |
+| `security-baseline-missing` | Notice that headers/forms were never approved for some pages (older baselines). One per site. | low |
+| `script-unjustified` | Script on a payment page without inventory justification or with overdue review (only with `pci.requireJustification`). | info/low |
+
+Signals: `payment-form-added` 50, `form-action-origin-changed` 50, `form-action-external` 25, `payment-field-added` 45, `payment-field-removed`/`-renamed` 30, `payment-frame-added` 30, `form-action-path-changed` 20, `form-method-changed` 12, `form-added` 10, `form-removed` 8, `form-field-changed` 8, `security-baseline-missing` 15, `script-unjustified-third-party` 15, `script-unjustified-first-party` 8, `script-review-overdue` 8, plus one `header-weakened:<header>` signal per weakened header (CSP: up to 60, `'unsafe-inline'` 40, new script host 25, directive removed 25-40; HSTS removed 35; X-Frame-Options removed 30). Override any of them under `risk.weights`. See [pci.md](pci.md).
+
 ## Outbound domain policy
 
 ```yaml

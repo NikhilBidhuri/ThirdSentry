@@ -23,6 +23,8 @@ const STORED_RESPONSE_HEADERS = new Set([
   'expires',
   'last-modified',
   'location',
+  'permissions-policy', // security headers of documents (PCI DSS 11.6.1 header baselines)
+  'referrer-policy',
   'server',
   'service-worker-allowed',
   'strict-transport-security',
@@ -30,6 +32,7 @@ const STORED_RESPONSE_HEADERS = new Set([
   'via',
   'x-cache',
   'x-content-type-options',
+  'x-frame-options',
 ]);
 
 const STORED_REQUEST_HEADERS = new Set(['accept', 'referer', 'sec-fetch-dest', 'sec-fetch-mode', 'sec-fetch-site', 'purpose']);
