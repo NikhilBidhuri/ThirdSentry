@@ -1,6 +1,7 @@
 import type { BrowserContext, Frame, Page, Request, Response } from 'playwright';
 import { filterResponseHeaders, redactText } from '../security/redaction.js';
 import type { RequestEvidence, ScriptResponseEvidence } from '../types/evidence.js';
+import { base64Length, clampUrl, jsonSize, type PageEvidenceBudget } from './evidence-budget.js';
 
 /**
  * Observes network activity of a page from *outside* the page (Playwright
@@ -18,6 +19,8 @@ export interface NetworkCollectorOptions {
   readonly maxScripts: number;
   readonly maxResourceBytes: number;
   readonly bodyTimeoutMs: number;
+  /** Evidence byte budget for this page; bodies beyond it are recorded as `budget-exceeded`. */
+  readonly budget?: PageEvidenceBudget;
 }
 
 const SCRIPT_CONTENT_TYPE = /(java|ecma)script|\bjscript\b|application\/wasm|text\/x-javascript/i;
@@ -45,12 +48,12 @@ function safeFrame(request: Request): Frame | undefined {
   }
 }
 
-function redirectChain(request: Request): string[] {
+function redirectChain(request: Request, clamp: (u: string) => string): string[] {
   const chain: string[] = [];
   let current = request.redirectedFrom();
   let guard = 0;
   while (current && guard < 50) {
-    chain.unshift(current.url());
+    chain.unshift(clamp(current.url()));
     current = current.redirectedFrom();
     guard++;
   }
@@ -66,12 +69,16 @@ export class NetworkCollector {
   private requestsDropped = 0;
   private scriptsDropped = 0;
   private scriptCount = 0;
+  private urlsTruncated = 0;
+  private bodiesOverBudget = 0;
   private detachers: Array<() => void> = [];
 
   constructor(page: Page, options: NetworkCollectorOptions) {
     this.page = page;
     this.options = options;
   }
+
+  private readonly clamp = (raw: string): string => clampUrl(raw, () => this.urlsTruncated++);
 
   attach(context: BrowserContext): void {
     const onRequest = (request: Request): void => this.onRequest(request, false);
@@ -113,17 +120,22 @@ export class NetworkCollector {
     const sw = request.serviceWorker();
     const from = request.redirectedFrom();
     const rec: RequestEvidence = {
-      url: request.url(),
-      method: request.method(),
-      resourceType: request.resourceType(),
+      url: this.clamp(request.url()),
+      method: request.method().slice(0, 16),
+      resourceType: request.resourceType().slice(0, 32),
       isMainFrame: frame !== undefined && frame === this.page.mainFrame(),
       isNavigation: request.isNavigationRequest(),
       fromServiceWorker: viaContext || sw !== null,
       timestamp: new Date().toISOString(),
-      ...(frame ? { frameUrl: frame.url() } : {}),
-      ...(from ? { redirectedFrom: from.url() } : {}),
-      ...(sw ? { workerUrl: sw.url() } : {}),
+      ...(frame ? { frameUrl: this.clamp(frame.url()) } : {}),
+      ...(from ? { redirectedFrom: this.clamp(from.url()) } : {}),
+      ...(sw ? { workerUrl: this.clamp(sw.url()) } : {}),
     };
+    // Status and failure text are added later; reserve a little room for them.
+    if (this.options.budget && !this.options.budget.tryReserve(jsonSize(rec) + 64, 'meta')) {
+      this.requestsDropped++;
+      return;
+    }
     this.requests.set(request, rec);
   }
 
@@ -155,10 +167,10 @@ export class NetworkCollector {
     const fetchDest = requestHeaders['sec-fetch-dest']?.slice(0, 32);
     const fetchMode = requestHeaders['sec-fetch-mode']?.slice(0, 32);
     const evidence: ScriptResponseEvidence = {
-      url: response.url(),
-      redirectChain: redirectChain(request),
-      method: request.method(),
-      requestResourceType: request.resourceType(),
+      url: this.clamp(response.url()),
+      redirectChain: redirectChain(request, this.clamp),
+      method: request.method().slice(0, 16),
+      requestResourceType: request.resourceType().slice(0, 32),
       status: response.status(),
       responseHeaders: filterResponseHeaders(headers),
       bodyStatus: 'not-attempted',
@@ -166,16 +178,26 @@ export class NetworkCollector {
       fromServiceWorker: response.fromServiceWorker() || sw !== null,
       source,
       timestamp: new Date().toISOString(),
-      ...(contentType ? { contentType } : {}),
+      ...(contentType ? { contentType: contentType.slice(0, 512) } : {}),
       ...(fetchDest ? { fetchDest } : {}),
       ...(fetchMode ? { fetchMode } : {}),
-      ...(frame ? { frameUrl: frame.url() } : {}),
-      ...(sw ? { workerUrl: sw.url() } : {}),
+      ...(frame ? { frameUrl: this.clamp(frame.url()) } : {}),
+      ...(sw ? { workerUrl: this.clamp(sw.url()) } : {}),
     };
+    const budget = this.options.budget;
+    // Network facts (which script was loaded) are kept even when the content
+    // budget is exhausted, using the metadata headroom.
+    if (budget && !budget.tryReserve(jsonSize(evidence) + 512, 'meta')) {
+      this.scriptsDropped++;
+      return;
+    }
     if (Number.isFinite(declared) && declared > this.options.maxResourceBytes) {
       evidence.bodyStatus = 'too-large';
       evidence.bodyBytes = declared;
       evidence.bodyNote = `Declared size ${declared} bytes exceeds limits.maxResourceBytes (${this.options.maxResourceBytes})`;
+    } else if (budget && !budget.canFit(base64Length(Number.isFinite(declared) && declared > 0 ? declared : 1))) {
+      // Do not even download the body: the content budget is already exhausted.
+      this.markOverBudget(evidence, Number.isFinite(declared) && declared > 0 ? declared : undefined);
     } else {
       try {
         const body = await withTimeout(response.body(), this.options.bodyTimeoutMs);
@@ -183,6 +205,8 @@ export class NetworkCollector {
           evidence.bodyStatus = 'too-large';
           evidence.bodyBytes = body.length;
           evidence.bodyNote = `Body size ${body.length} bytes exceeds limits.maxResourceBytes (${this.options.maxResourceBytes})`;
+        } else if (budget && !budget.tryReserve(base64Length(body.length))) {
+          this.markOverBudget(evidence, body.length);
         } else {
           evidence.bodyStatus = 'captured';
           evidence.bodyBytes = body.length;
@@ -196,6 +220,13 @@ export class NetworkCollector {
     this.scriptResponses.push(evidence);
   }
 
+  private markOverBudget(evidence: ScriptResponseEvidence, bytes: number | undefined): void {
+    this.bodiesOverBudget++;
+    evidence.bodyStatus = 'budget-exceeded';
+    if (bytes !== undefined) evidence.bodyBytes = bytes;
+    evidence.bodyNote = 'Body not stored: the evidence budget (limits.maxEvidenceBytesPerPage / maxEvidenceBytesPerScan) was exhausted';
+  }
+
   /** Wait (bounded) for in-flight body captures and detach listeners. */
   async finalize(timeoutMs: number): Promise<{
     requests: RequestEvidence[];
@@ -203,6 +234,8 @@ export class NetworkCollector {
     requestsDropped: number;
     scriptsDropped: number;
     pendingAbandoned: number;
+    urlsTruncated: number;
+    bodiesOverBudget: number;
   }> {
     const deadline = Date.now() + timeoutMs;
     while (this.pending.size > 0 && Date.now() < deadline) {
@@ -217,6 +250,8 @@ export class NetworkCollector {
       requestsDropped: this.requestsDropped,
       scriptsDropped: this.scriptsDropped,
       pendingAbandoned: abandoned,
+      urlsTruncated: this.urlsTruncated,
+      bodiesOverBudget: this.bodiesOverBudget,
     };
   }
 }

@@ -17,7 +17,12 @@ const shortText = z.string().max(4_096);
 const timestamp = z.string().max(64);
 const headers = z.record(z.string().max(256), z.string().max(8_192));
 
-export const BodyStatusSchema = z.enum(['captured', 'too-large', 'unavailable', 'not-attempted']);
+/**
+ * `budget-exceeded`: the body was available but the per-page or per-scan
+ * evidence budget (limits.maxEvidenceBytesPerPage / PerScan) was exhausted,
+ * so only metadata was kept. The page is marked partial.
+ */
+export const BodyStatusSchema = z.enum(['captured', 'too-large', 'unavailable', 'not-attempted', 'budget-exceeded']);
 
 export const ScriptResponseEvidenceSchema = z.object({
   /** URL of the final response (after redirects). */
@@ -57,6 +62,8 @@ export const DomScriptEvidenceSchema = z.object({
   text: z.string().optional(),
   textTruncated: z.boolean().optional(),
   textBytes: z.number().int().min(0).optional(),
+  /** `budget-exceeded` when the inline text was dropped because the evidence budget was exhausted. */
+  textStatus: z.enum(['captured', 'budget-exceeded']).optional(),
   domPath: z.string().max(1024),
   frameUrl: url,
   isMainFrame: z.boolean(),
@@ -79,6 +86,8 @@ export const BlobEvidenceSchema = z.object({
   size: z.number().int().min(0),
   textBase64: z.string().optional(),
   truncated: z.boolean(),
+  /** `budget-exceeded` when the content was dropped because the evidence budget was exhausted. */
+  bodyStatus: BodyStatusSchema.optional(),
   frameUrl: url,
   isMainFrame: z.boolean().optional(),
   timestamp,
@@ -119,6 +128,26 @@ export const IssueSchema = z.object({
 
 export const PageStatusSchema = z.enum(['complete', 'partial', 'failed']);
 
+/** Counters for evidence that was observed but not recorded (each also reported as an issue). */
+export const DroppedEvidenceSchema = z
+  .object({
+    /** Blob reports beyond the per-page entry limit. */
+    blobs: z.number().int().min(0),
+    /** Worker reports beyond the per-page entry limit. */
+    workers: z.number().int().min(0),
+    /** Calls to the in-page reporting binding beyond limits.maxReportCallsPerPage. */
+    reportCalls: z.number().int().min(0),
+    /** Reports the in-page instrumentation itself discarded (its per-frame cap). */
+    inPageReports: z.number().int().min(0),
+    /** Blobs the in-page instrumentation stopped tracking (registry full). */
+    untrackedBlobs: z.number().int().min(0),
+    /** Bodies/texts not stored because the evidence budget was exhausted. */
+    budgetExceeded: z.number().int().min(0),
+    /** Frames whose DOM was not snapshotted (deadline, snapshot budget or timeout). */
+    framesNotInspected: z.number().int().min(0),
+  })
+  .partial();
+
 export const FrameEvidenceSchema = z.object({
   url,
   parentUrl: url.optional(),
@@ -150,6 +179,10 @@ export const PageEvidenceSchema = z.object({
   consoleErrors: z.array(shortText).max(200),
   pageErrors: z.array(shortText).max(200),
   screenshotBase64: z.string().optional(),
+  /** Optional (absent in evidence written by older versions). */
+  dropped: DroppedEvidenceSchema.optional(),
+  /** Approximate bytes of evidence recorded for this page (budget accounting). */
+  evidenceBytes: z.number().int().min(0).optional(),
 });
 
 export const ProxyEventSchema = z.object({
@@ -203,3 +236,5 @@ export type ProxyEvent = z.infer<typeof ProxyEventSchema>;
 export type SiteEvidence = z.infer<typeof SiteEvidenceSchema>;
 export type ScanEvidence = z.infer<typeof ScanEvidenceSchema>;
 export type FrameEvidence = z.infer<typeof FrameEvidenceSchema>;
+export type DroppedEvidence = z.infer<typeof DroppedEvidenceSchema>;
+export type BodyStatus = z.infer<typeof BodyStatusSchema>;

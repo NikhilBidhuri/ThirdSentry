@@ -3,7 +3,7 @@ import { compact } from '../utils/object.js';
 import { decodeDataUrl, frameContextOf, stripFragment, type DiscoveryContext, type ResourceCandidate } from './candidate.js';
 import { classifyExternal, scriptElementKind, type ScriptElementKind } from './resource-classifier.js';
 import { blobIdentity, dataUrlIdentity, externalIdentity } from './resource-identity.js';
-import { sha256Hex } from '../analysis/hashing.js';
+import { sha256Hex, verifySri } from '../analysis/hashing.js';
 import { isModuleSource } from '../analysis/parser.js';
 
 /**
@@ -38,6 +38,19 @@ function elementKind(elements: readonly DomScriptEvidence[]): ScriptElementKind 
   return undefined;
 }
 
+/**
+ * SRI attribute to check for a response. Only the end-of-scan DOM snapshot
+ * (taken outside the page's hooks) can establish it: a value reported only by
+ * the in-page instrumentation is page-controlled and could create a false
+ * mismatch or hide a real one by reporting the matching hash. When the
+ * snapshot shows several values, a failing one wins.
+ */
+function corroboratedIntegrity(elements: readonly DomScriptEvidence[], body: Buffer | undefined): string | undefined {
+  const values = [...new Set(elements.filter((e) => e.observedVia === 'snapshot' && e.integrity).map((e) => e.integrity as string))];
+  if (values.length <= 1 || !body) return values[0];
+  return values.find((v) => verifySri(v, body) === false) ?? values[0];
+}
+
 function responseCandidate(
   res: ScriptResponseEvidence,
   dom: Map<string, DomScriptEvidence[]>,
@@ -63,15 +76,18 @@ function responseCandidate(
   });
   const isScriptElementType = type === 'script' || type === 'module';
   // Only mutation-observer entries know whether an element was injected by
-  // script; end-of-scan snapshot entries carry no provenance.
+  // script; end-of-scan snapshot entries carry no provenance. Any report of
+  // runtime injection counts: page-reported data may add the signal but a
+  // (forged) "parser-inserted" report must not remove it.
   const observed = elements.filter((e) => e.observedVia === 'mutation');
-  const dynamic =
-    isScriptElementType && (elements.length === 0 || (observed.length > 0 && observed.every((e) => e.insertedByScript)));
+  const dynamic = isScriptElementType && (elements.length === 0 || observed.some((e) => e.insertedByScript));
   const discovery = ['network', res.source];
   if (elements.length > 0) discovery.push('dom-element');
   else if (isScriptElementType) discovery.push('no-script-element');
   if (elements.some((e) => e.viaDocumentWrite)) discovery.push('document-write');
-  const integrity = elements.find((e) => e.integrity)?.integrity;
+  const integrity = corroboratedIntegrity(elements, body);
+  if (!integrity && elements.some((e) => e.integrity)) discovery.push('integrity-uncorroborated');
+  const overBudget = res.bodyStatus === 'budget-exceeded';
   return compact<ResourceCandidate>({
     // Identity follows the URL the page requested (first hop), so a change of
     // redirect destination is detected as a change of the same resource.
@@ -92,8 +108,8 @@ function responseCandidate(
     httpStatus: res.status,
     contentType: res.contentType,
     body,
-    contentStatus: body ? 'captured' : res.bodyStatus,
-    contentNote: res.bodyNote,
+    contentStatus: body ? 'captured' : res.bodyStatus === 'budget-exceeded' ? 'unavailable' : res.bodyStatus,
+    contentNote: overBudget ? (res.bodyNote ?? 'Body not stored: evidence budget exhausted') : res.bodyNote,
     declaredSize: res.bodyBytes,
     integrity,
     fromServiceWorker: res.fromServiceWorker,

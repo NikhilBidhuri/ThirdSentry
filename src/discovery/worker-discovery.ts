@@ -54,7 +54,12 @@ export function discoverWorkersAndBlobs(page: PageEvidence, ctx: DiscoveryContex
         contentType: blob.mimeType || undefined,
         body,
         contentStatus: body ? (blob.truncated ? 'truncated' : 'captured') : 'unavailable',
-        contentNote: blob.truncated ? 'Blob larger than limits.maxResourceBytes; only the first part was captured' : undefined,
+        contentNote:
+          blob.bodyStatus === 'budget-exceeded'
+            ? 'Blob content not stored: the evidence budget was exhausted'
+            : blob.truncated
+              ? 'Blob larger than limits.maxResourceBytes; only the first part was captured'
+              : undefined,
         declaredSize: blob.size,
         fromServiceWorker: false,
         timestamp: blob.timestamp,
