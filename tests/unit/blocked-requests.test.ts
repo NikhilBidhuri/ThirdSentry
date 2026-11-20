@@ -64,8 +64,22 @@ describe('blocked outbound requests', () => {
   });
 
   it('counts an HTTPS (CONNECT) refusal without a status as blocked', () => {
-    const flags = blockedFlags(evidence([request('https://169.254.169.254/', { failure: 'net::ERR_TUNNEL_CONNECTION_FAILED' })], ['169.254.169.254']));
+    const ev = evidence([request('https://169.254.169.254/', { failure: 'net::ERR_TUNNEL_CONNECTION_FAILED' })], []);
+    ev.sites[0]!.proxyEvents.push({ timestamp: T, host: '169.254.169.254', port: 443, method: 'CONNECT', allowed: false, code: 'cloud-metadata' });
+    const flags = blockedFlags(ev);
     expect(flags['169.254.169.254']).toBe(true);
+  });
+
+  it('counts a refused http:// fetch that the browser reports as a generic CORS failure (net::ERR_FAILED)', () => {
+    // Seen in Docker: fetch() from the page to the proxy's 403 fails CORS, so there is no status.
+    const flags = blockedFlags(evidence([request('http://169.254.169.254/latest/meta-data/', { failure: 'net::ERR_FAILED' })], ['169.254.169.254']));
+    expect(flags['169.254.169.254']).toBe(true);
+  });
+
+  it('matches the refused port: a failed request to another port of the host is not counted as blocked', () => {
+    // The proxy refused api.example:80 (helper records port 80); this request went to :443.
+    const flags = blockedFlags(evidence([request('https://api.example/', { failure: 'net::ERR_CONNECTION_RESET' })], ['api.example']));
+    expect(flags['api.example']).toBe(false);
   });
 
   it('does not mark a 403 as blocked when the proxy did not block that host', () => {

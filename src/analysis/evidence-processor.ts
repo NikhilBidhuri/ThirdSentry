@@ -155,11 +155,17 @@ function freeze(r: MutableResource): ScriptResource {
   });
 }
 
-function isBlockedFailure(failure: string | undefined): boolean {
-  return failure !== undefined && /TUNNEL_CONNECTION_FAILED|PROXY|403|blocked/i.test(failure);
+/** host:port endpoints the egress proxy refused (from its connection events). */
+function endpointKey(host: string, port: number | string): string {
+  return `${host.toLowerCase().replace(/^\[|\]$/g, '')}:${port}`;
 }
 
-function outboundRequests(page: PageEvidence, party: PartyContext, blockedHosts: ReadonlySet<string>, max: number): { requests: OutboundRequest[]; truncated: number } {
+function requestEndpoint(url: URL): string {
+  const port = url.port || (url.protocol === 'https:' || url.protocol === 'wss:' ? '443' : '80');
+  return endpointKey(url.hostname, port);
+}
+
+function outboundRequests(page: PageEvidence, party: PartyContext, blockedEndpoints: ReadonlySet<string>, max: number): { requests: OutboundRequest[]; truncated: number } {
   const out: OutboundRequest[] = [];
   let truncated = 0;
   for (const req of page.requests) {
@@ -191,10 +197,12 @@ function outboundRequests(page: PageEvidence, party: PartyContext, blockedHosts:
         status: req.status,
         failure: req.failure ? redactText(req.failure, 300) : undefined,
         fromServiceWorker: req.fromServiceWorker,
-        // blockedHosts comes from the egress proxy's blocked-connection events. HTTPS
-        // (CONNECT) refusals surface as a failed request without a status; plain
-        // http:// refusals are delivered to the page as the proxy's own 403 response.
-        blocked: blockedHosts.has(info.hostname) && (req.failure === undefined || isBlockedFailure(req.failure)) && (req.status === undefined || req.status === 403),
+        // The egress proxy's record of refused host:port endpoints is the authority
+        // (browser error strings differ per engine: an HTTPS refusal is a tunnel error,
+        // a plain http:// refusal is the proxy's 403, which fetch() may surface as a
+        // generic CORS failure). A request counts as blocked when its endpoint was
+        // refused and it received no response other than the proxy's 403.
+        blocked: blockedEndpoints.has(requestEndpoint(url)) && (req.status === undefined || req.status === 403),
       }),
     );
   }
@@ -237,7 +245,7 @@ function processSite(
   const party = partyContextFor(evidence.url, site?.firstPartyDomains ?? []);
   const ignoreQueryParams = site?.ignoreQueryParams ?? [];
   const resources = new Map<string, MutableResource>();
-  const blockedHosts = new Set(evidence.proxyEvents.filter((e: ProxyEvent) => !e.allowed).map((e) => e.host.toLowerCase()));
+  const blockedEndpoints = new Set(evidence.proxyEvents.filter((e: ProxyEvent) => !e.allowed).map((e) => endpointKey(e.host, e.port)));
   const pages: PageResult[] = [];
 
   evidence.pages.forEach((page, index) => {
@@ -255,7 +263,7 @@ function processSite(
       else resources.set(key, buildResource(c, party, contents, options.maxResourceBytes * 2));
       pageKeys.add(key);
     }
-    const { requests, truncated } = outboundRequests(page, party, blockedHosts, options.maxRequestsStoredPerPage);
+    const { requests, truncated } = outboundRequests(page, party, blockedEndpoints, options.maxRequestsStoredPerPage);
     let screenshot: string | undefined;
     if (page.screenshotBase64) {
       screenshot = `screenshots/${scanId}/${evidence.name}/${index}.png`;
