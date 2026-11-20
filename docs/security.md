@@ -55,8 +55,11 @@ All browser traffic (HTTP, HTTPS, WebSocket) is forced through ThirdSentry's egr
 
 - For **every connection**, including every redirect hop and every subresource, the proxy resolves the hostname **once**, checks **every** returned address, and then opens the TCP connection to **that validated address**. The browser never resolves names itself for proxied traffic. A DNS answer that changes between check and use (DNS rebinding, TOCTOU) therefore cannot redirect the connection.
 - If any resolved address is disallowed, the destination is refused. This prevents mixed public and private record sets.
-- Blocked ranges: loopback (`127.0.0.0/8`, `::1`), private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), link-local (`169.254/16`, `fe80::/10`), carrier-grade NAT (`100.64/10`), multicast, reserved, documentation and unspecified ranges, and cloud metadata endpoints (`169.254.169.254`, `169.254.170.2`, `100.100.100.200`, `192.0.0.192`, `fd00:ec2::254`).
-- IPv6 forms that embed IPv4 (IPv4-mapped `::ffff:a.b.c.d`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`) are evaluated by their embedded IPv4 address. Teredo is blocked.
+- Blocked ranges: loopback (`127.0.0.0/8`, `::1`), private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), link-local (`169.254/16`, `fe80::/10`), carrier-grade NAT (`100.64/10`), multicast, reserved, documentation and unspecified ranges, and cloud metadata endpoints (`169.254.169.254`, `169.254.170.2`, `100.100.100.200`, `192.0.0.192`, `168.63.129.16` (Azure WireServer), `169.254.170.23` (EKS Pod Identity), `fd00:ec2::254`, `fd00:ec2::23`). These are never unlockable through `allowedPrivateHosts`.
+- IPv6 forms that embed IPv4 (IPv4-mapped `::ffff:a.b.c.d`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`) are evaluated by their embedded IPv4 address. Teredo is blocked. IPv6 is allowlisted: only global unicast (`2000::/3`) is reachable, so unassigned and special space such as `3fff::/20` or SRv6 `5f00::/16` is refused.
+- DNS lookups are bounded (5 s); a lookup that does not answer refuses the destination.
+- The proxy treats everything from clients and upstream servers as hostile: invalid upstream status lines or headers produce a 502, upgrades (101) are refused, and an error guard around each connection means no single connection can stop the proxy process.
+- In the container pipeline the proxy records connections per run and site on its own volume, and the analyzer uses that record instead of the scanner's report (see [docker.md](docker.md)).
 - Hostnames such as `localhost`, `*.localhost` and `metadata.google.internal` are refused before resolution.
 - Only ports in `security.network.allowedPorts` (default 80 and 443) are reachable.
 - Per-connection byte caps and connect/idle timeouts bound resource use.

@@ -10,7 +10,7 @@ Third-party scripts can change at any time, so ThirdSentry is most useful when i
 0 */6 * * * cd /opt/thirdsentry && flock -n /tmp/thirdsentry.lock ./scripts/run-scan.sh >> /var/log/thirdsentry/scan.log 2>&1
 ```
 
-- `flock -n` prevents overlapping runs if a scan takes longer than the interval.
+- `flock -n` skips a run when the previous one is still going. `run-scan.sh` additionally serialises runs itself and gives each run its own evidence and proxy-event files, so manual runs cannot clobber a scheduled one.
 - `run-scan.sh` exits `1` when findings exceed `failOn` and `3` when a scan was incomplete; cron treats every run the same, so rely on alerts (or log monitoring) for notification.
 - Run it as a user that may use Docker. The ThirdSentry containers themselves run unprivileged.
 

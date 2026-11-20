@@ -4,18 +4,32 @@
 #
 #   egress-proxy  only container with internet access; enforces the network policy
 #                 (blocks private, loopback, link-local and metadata addresses per connection)
+#                 and records connection events per run/site on the proxy-events volume
 #   scanner       runs the browser; NO internet route (internal network), NO secrets,
 #                 NO baselines; can only reach the egress proxy
 #   analyzer      NO network at all; validates evidence, compares with read-only baselines,
-#                 writes reports
+#                 takes connection events from the proxy's record (read-only), writes reports
 #   alerter       only container that receives alert credentials (.env); reads reports
+#
+# Images (one Dockerfile, two targets; see Dockerfile):
+#   thirdsentry:slim   Node.js only (~400 MB): egress-proxy, analyzer, alerter, tools
+#   thirdsentry:local  Playwright image with browsers (~3.7 GB): scanner only
+#
+# Per-run files: THIRDSENTRY_RUN_ID names this run's evidence file
+# (/evidence/<run>.json) and the egress proxy's event record
+# (/proxy-events/<run>.ndjson). scripts/run-scan.sh sets it; the default only
+# serves manual `docker compose run` use.
+#
+# The egress proxy reads thirdsentry.yml once, at start. scripts/run-scan.sh
+# passes THIRDSENTRY_PROXY_CONFIG_HASH so that `up -d` recreates the proxy when
+# the file changed; when running compose by hand, use
+# `docker compose up -d --force-recreate egress-proxy` after editing it.
 #
 # Run a scan:     ./scripts/run-scan.sh        (see docs/docker.md)
 # Project files:  THIRDSENTRY_PROJECT_DIR (default ./examples/project) must contain
 #                 thirdsentry.yml and .thirdsentry/baselines/
 
 x-hardening: &hardening
-  image: thirdsentry:local
   read_only: true
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
@@ -23,26 +37,48 @@ x-hardening: &hardening
   tmpfs:
     - /tmp:size=256m,mode=1777
 
+x-slim: &slim
+  <<: *hardening
+  image: thirdsentry:slim
+  build: { context: ., target: slim }
+
+x-browser: &browser
+  <<: *hardening
+  image: thirdsentry:local
+  build: { context: ., target: browser }
+
 x-config: &config-volume ${THIRDSENTRY_PROJECT_DIR:-./examples/project}/thirdsentry.yml:/work/thirdsentry.yml:ro
 
 services:
   egress-proxy:
-    <<: *hardening
-    build: .
-    command: ["--config", "/work/thirdsentry.yml", "egress-proxy", "--listen", "0.0.0.0:3128"]
-    volumes: [*config-volume]
+    <<: *slim
+    command: ["--config", "/work/thirdsentry.yml", "egress-proxy", "--listen", "0.0.0.0:3128", "--events-dir", "/proxy-events"]
+    environment:
+      # Changes when thirdsentry.yml changes, which makes `up -d` recreate the proxy.
+      THIRDSENTRY_PROXY_CONFIG_HASH: ${THIRDSENTRY_PROXY_CONFIG_HASH:-unset}
+    volumes:
+      - *config-volume
+      # Trusted record of connections per run and site. Only the proxy writes it.
+      - proxy-events:/proxy-events
+    healthcheck:
+      test: ["CMD", "node", "-e", "const s=require('node:net').connect(3128,'127.0.0.1',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
     networks: [scan-internal, egress]
     mem_limit: 256m
     pids_limit: 128
     restart: unless-stopped
 
   scanner:
-    <<: *hardening
+    <<: *browser
     profiles: [pipeline]
     # Chromium's own sandbox needs privileges this hardened container does not
     # have; the container (no capabilities, read-only rootfs, no route to the
     # internet or your network, no secrets) is the isolation boundary instead.
-    command: ["--config", "/work/thirdsentry.yml", "collect", "--out", "/evidence/evidence.json", "--proxy", "http://egress-proxy:3128", "--no-chromium-sandbox"]
+    # The scanner does NOT mount proxy-events: it cannot read or alter the record.
+    command: ["--config", "/work/thirdsentry.yml", "collect", "--out", "/evidence/${THIRDSENTRY_RUN_ID:-manual}.json", "--run-id", "${THIRDSENTRY_RUN_ID:-manual}", "--proxy", "http://egress-proxy:3128", "--no-chromium-sandbox"]
     volumes:
       - *config-volume
       - evidence:/evidence
@@ -50,21 +86,24 @@ services:
       - /tmp:size=1g,mode=1777
       - /home/pwuser:size=256m,uid=1000,gid=1000
     networks: [scan-internal]
-    depends_on: [egress-proxy]
+    depends_on:
+      egress-proxy:
+        condition: service_healthy
     shm_size: 1gb
     mem_limit: 2g
     cpus: 2
     pids_limit: 512
 
   analyzer:
-    <<: *hardening
+    <<: *slim
     profiles: [pipeline]
-    command: ["--config", "/work/thirdsentry.yml", "analyze", "--evidence", "/evidence/evidence.json"]
+    command: ["--config", "/work/thirdsentry.yml", "analyze", "--evidence", "/evidence/${THIRDSENTRY_RUN_ID:-manual}.json", "--proxy-events", "/proxy-events/${THIRDSENTRY_RUN_ID:-manual}.ndjson"]
     network_mode: none
     volumes:
       - *config-volume
       - ${THIRDSENTRY_PROJECT_DIR:-./examples/project}/.thirdsentry/baselines:/work/.thirdsentry/baselines:ro
       - evidence:/evidence:ro
+      - proxy-events:/proxy-events:ro
       - reports:/work/.thirdsentry/reports
       - state:/work/.thirdsentry/state
       - cache:/work/.thirdsentry/cache
@@ -72,7 +111,7 @@ services:
     pids_limit: 128
 
   alerter:
-    <<: *hardening
+    <<: *slim
     profiles: [pipeline]
     command: ["--config", "/work/thirdsentry.yml", "alert"]
     env_file:
@@ -89,7 +128,7 @@ services:
   # Maintenance commands (baseline, diff, report, cleanup). No network.
   # Example: docker compose run --rm tools baseline
   tools:
-    <<: *hardening
+    <<: *slim
     profiles: [tools]
     network_mode: none
     volumes:
@@ -102,6 +141,7 @@ services:
 
 volumes:
   evidence:
+  proxy-events:
   reports:
   state:
   cache:
