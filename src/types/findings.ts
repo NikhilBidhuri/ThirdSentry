@@ -31,7 +31,8 @@ export type ChangeKind =
   | 'iframe-origin-added'
   | 'iframe-origin-removed'
   | 'page-failed'
-  | 'coverage-degraded';
+  | 'coverage-degraded'
+  | 'vulnerable-library';
 
 /** A single contribution to a finding's risk score, shown to users verbatim. */
 export interface Signal {

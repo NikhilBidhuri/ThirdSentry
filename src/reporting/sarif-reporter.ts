@@ -38,6 +38,7 @@ const KIND_DESCRIPTIONS: Record<string, string> = {
   'denylisted-domain': 'A denylisted domain is used by the page.',
   'iframe-origin-added': 'A new iframe origin is embedded in the page.',
   'iframe-origin-removed': 'An approved iframe origin is no longer embedded.',
+  'vulnerable-library': 'A JavaScript library with known vulnerabilities (CVE) is loaded.',
 };
 
 export interface SarifOptions {

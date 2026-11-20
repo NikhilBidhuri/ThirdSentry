@@ -3,8 +3,11 @@ import type { Command } from 'commander';
 import { loadConfig } from '../../config/loader.js';
 import { analyzeScan, exceedsThreshold } from '../../monitoring/analysis-runner.js';
 import { loadBaseline } from '../../baseline/baseline-manager.js';
+import { libraryDisplayName } from '../../analysis/libraries/describe.js';
+import { compareVersions } from '../../analysis/libraries/version.js';
 import { diffScripts } from '../../analysis/structural-diff.js';
 import { ContentStore, loadLatestScan, loadScanResult, scriptContentMode } from '../../storage/filesystem-store.js';
+import type { ScanResult } from '../../types/index.js';
 import type { AnalysisReport } from '../../types/report.js';
 import type { Finding } from '../../types/findings.js';
 import { ConfigError } from '../../utils/errors.js';
@@ -67,6 +70,56 @@ export async function codeDiffsFor(resolved: ResolvedConfig, findings: readonly 
   return out;
 }
 
+export interface LibraryChange {
+  readonly site: string;
+  readonly resource: string;
+  readonly library: string;
+  readonly kind: 'updated' | 'downgraded' | 'added' | 'removed';
+  readonly from?: string;
+  readonly to?: string;
+}
+
+/** Library versions that differ between the approved baseline and the scan (per resource). */
+export async function libraryChangesFor(resolved: ResolvedConfig, scan: ScanResult): Promise<LibraryChange[]> {
+  const out: LibraryChange[] = [];
+  for (const site of scan.sites) {
+    const baseline = await loadBaseline(resolved.paths, site.name).catch(() => undefined);
+    if (!baseline) continue;
+    const seen = new Set<string>();
+    for (const r of site.resources) {
+      const b = baseline.resources.find((x) => x.identity === r.identity);
+      if (!b || seen.has(r.identity)) continue;
+      seen.add(r.identity);
+      const before = new Map((b.libraries ?? []).map((l) => [l.name, l.version]));
+      const now = new Map((r.libraries ?? []).map((l) => [l.name, l.version]));
+      const resource = r.finalUrl ?? r.originalUrl ?? r.identity;
+      for (const [name, to] of now) {
+        const from = before.get(name);
+        if (from === undefined) out.push({ site: site.name, resource, library: name, kind: 'added', to });
+        else if (from !== to) out.push({ site: site.name, resource, library: name, kind: (compareVersions(to, from) ?? 0) < 0 ? 'downgraded' : 'updated', from, to });
+      }
+      for (const [name, from] of before) if (!now.has(name)) out.push({ site: site.name, resource, library: name, kind: 'removed', from });
+    }
+  }
+  return out;
+}
+
+function printLibraryChanges(changes: readonly LibraryChange[]): void {
+  if (changes.length === 0) return;
+  print();
+  print(color.bold('Library changes since the approved baseline'));
+  for (const c of changes) {
+    const name = libraryDisplayName(c.library);
+    const what =
+      c.kind === 'added'
+        ? `now recognised: ${name} ${c.to ?? ''}`
+        : c.kind === 'removed'
+          ? `no longer recognised: ${name} ${c.from ?? ''}`
+          : `${name} ${c.from ?? ''} → ${c.to ?? ''}${c.kind === 'downgraded' ? ' (downgrade)' : ''}`;
+    print(`  ${c.site}: ${what} ${color.gray(c.resource)}`);
+  }
+}
+
 function colorPatch(patch: string): string {
   return patch
     .split('\n')
@@ -102,13 +155,15 @@ export function registerDiff(program: Command): void {
       const selected = findingIds ? report.findings.filter((f) => findingIds.includes(f.id)) : report.findings;
       const shown: AnalysisReport = { ...report, findings: selected };
       const diffs = await codeDiffsFor(resolved, selected, context);
+      const libraryChanges = resolved.config.libraries.detect ? await libraryChangesFor(resolved, scan) : [];
       const approveIds = findingIds ? findingIds.join(',') : '<finding-id>[,<finding-id>...]';
       const approveCommand = `thirdsentry baseline --scan-id ${scan.scanId} --approve ${approveIds}`;
       if (g.json) {
-        printJson({ ...shown, codeDiffs: diffs, ...(selected.length > 0 ? { approveCommand } : {}) });
+        printJson({ ...shown, codeDiffs: diffs, libraryChanges, ...(selected.length > 0 ? { approveCommand } : {}) });
       } else {
         print(color.bold(`Scan ${scan.scanId}`) + color.gray(` (${scan.startedAt}, ${opts.scan ? scanPath : 'latest scan'})`));
         printReport(shown, g.verbose === true);
+        printLibraryChanges(libraryChanges);
         for (const d of diffs) {
           print();
           print(color.bold(`Code diff for ${d.findingId}`) + (d.mode ? color.gray(` (${d.mode})`) : ''));

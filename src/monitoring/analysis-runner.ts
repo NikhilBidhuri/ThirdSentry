@@ -1,6 +1,7 @@
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { loadBaseline } from '../baseline/baseline-manager.js';
 import type { ResolvedConfig } from '../config/loader.js';
+import { loadLibraryDb } from '../analysis/libraries/vulndb.js';
 import { writeReports, type ReportFormat, type WrittenReports } from '../reporting/index.js';
 import { ensureScanReportDir } from '../storage/filesystem-store.js';
 import { assertSiteName, baselinePath } from '../storage/paths.js';
@@ -13,6 +14,7 @@ import { copyFileAtomic, writeJsonAtomic } from '../utils/fs.js';
 import { toolVersion } from '../utils/version.js';
 import { compareSite, type ComparisonResult } from './comparison-engine.js';
 import { buildFindings } from './finding-engine.js';
+import { buildLibraryFindings, buildLibraryReport } from './library-findings.js';
 import { applySuppressions } from './suppressions.js';
 import { annotateFindings, loadFindingState, saveFindingState, trackFindings } from './dedup-state.js';
 import { getLogger } from '../utils/logger.js';
@@ -95,7 +97,13 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
   const findings: Finding[] = [];
   const sites: SiteComparisonSummary[] = [];
 
+  const libraryConfig = resolved.config.libraries;
+  const libraryDb = libraryConfig.detect ? await loadLibraryDb(resolved.paths.cache, { now, maxAgeDays: libraryConfig.maxDbAgeDays }) : undefined;
+  for (const w of libraryDb?.info.warnings ?? []) if (libraryDb?.info.source === 'cache' || libraryDb?.info.stale) getLogger('analysis').warn(w);
+
   for (const site of scan.sites) {
+    const libraryFindings = libraryDb ? buildLibraryFindings(site, { db: libraryDb, libraries: libraryConfig, risk: resolved.config.risk, now }) : [];
+    findings.push(...libraryFindings);
     const baseline = await loadBaseline(resolved.paths, site.name);
     const path = relative(resolved.baseDir, baselinePath(resolved.paths, site.name)) || baselinePath(resolved.paths, site.name);
     if (!baseline) {
@@ -110,7 +118,7 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
         removedResources: 0,
         newDomains: [],
         pagesNotCompared: site.pages.map((p) => p.key),
-        findings: 0,
+        findings: libraryFindings.length,
       });
       continue;
     }
@@ -143,7 +151,7 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
       removedResources: kinds.filter((k) => k === 'resource-removed').length,
       newDomains: [...new Set(comparison.changes.filter((c) => c.kind === 'new-script-domain' || c.kind === 'new-outbound-domain').map((c) => c.domain ?? ''))].filter(Boolean).sort(),
       pagesNotCompared: comparison.pagesNotCompared,
-      findings: siteFindings.length,
+      findings: siteFindings.length + libraryFindings.length,
     });
   }
 
@@ -159,6 +167,7 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
     annotateFindings(suppression.findings, state);
   }
   const sorted = sortFindings(suppression.findings);
+  const libraryReport = buildLibraryReport(scan.sites, libraryDb, libraryConfig);
   const base: Omit<AnalysisReport, 'headline'> = {
     schemaVersion: 1,
     kind: 'thirdsentry-report',
@@ -176,6 +185,7 @@ export async function analyzeScan(resolved: ResolvedConfig, scan: ScanResult, op
     findingCounts: countBy(sorted),
     highestSeverity: highestSeverity(sorted),
     coverageLimitations: scan.coverageLimitations,
+    ...(libraryReport ? { libraries: libraryReport } : {}),
   };
   return { report: { ...base, headline: headline(base) }, comparisons };
 }

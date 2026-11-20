@@ -3,6 +3,7 @@ import { assess, customSignal, signal, type RiskConfig, DEFAULT_RISK_CONFIG } fr
 import { shortHash } from '../analysis/hashing.js';
 import { EMPTY_DOMAIN_POLICY, evaluateDomain } from '../analysis/domain-analyzer.js';
 import { RULES_BY_ID } from '../analysis/indicator-rules.js';
+import { describeLibraryChange } from '../analysis/libraries/describe.js';
 import { SEVERITY_WEIGHT } from '../analysis/rule-types.js';
 import type { DomainPolicy, RuleConfig } from '../config/schema.js';
 import type { Confidence, Evidence, Finding, Signal } from '../types/findings.js';
@@ -133,9 +134,10 @@ function template(c: Change, ctx: FindingContext, sensitive: boolean): Template 
       signals.unshift(isInline(c) ? s('inline-changed') : third ? s('hash-changed-third-party') : s('hash-changed-first-party'));
       if (r?.dynamic) signals.push(s('runtime-injection'));
       const truncated = r?.content.status === 'truncated';
+      const libChange = describeLibraryChange(c.baseline?.libraries, r?.libraries);
       return {
-        title: isInline(c) ? `Inline script changed${where}` : `${third ? 'Third-party' : 'First-party'} script changed${where}`,
-        reason: `${isInline(c) ? 'An approved inline script' : `The approved script ${label}`} now has different content (and not only different formatting). Vendors update scripts routinely, so this is not by itself evidence of compromise, but the new code has not been reviewed.`,
+        title: `${isInline(c) ? 'Inline script changed' : `${third ? 'Third-party' : 'First-party'} script changed`}${libChange ? ` (${libChange.text})` : ''}${where}`,
+        reason: `${isInline(c) ? 'An approved inline script' : `The approved script ${label}`} now has different content (and not only different formatting).${libChange ? ` It is a known library whose version changed: ${libChange.text}${libChange.downgrade ? ' (a downgrade, which is unusual and worth checking)' : ''}.` : ''} Vendors update scripts routinely, so this is not by itself evidence of compromise, but the new code has not been reviewed.`,
         action: INVESTIGATE_SCRIPT,
         signals,
         confidence: truncated ? 'medium' : 'high',
@@ -323,6 +325,8 @@ function evidenceFor(c: Change): Evidence[] {
     ev.push({ label: 'Size', value: `${b.approvedHashes.at(-1)?.size ?? 0} → ${r.size} bytes` });
   }
   if (r?.dynamic) ev.push({ label: 'Injected at runtime', value: 'yes' });
+  const libChange = c.kind === 'resource-modified' ? describeLibraryChange(b?.libraries, r?.libraries) : undefined;
+  if (libChange) ev.push({ label: 'Library version', value: libChange.text });
   if (r?.domPath) ev.push({ label: 'DOM position', value: r.domPath });
   for (const [k, v] of Object.entries(c.details)) if (v) ev.push({ label: k, value: v.slice(0, 1000) });
   if (c.pages.length > 0) ev.push({ label: 'Pages', value: c.pages.join(', ') });

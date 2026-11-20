@@ -88,6 +88,17 @@ Compare the latest scan (or `--scan <file>`) with the baselines without scanning
 | `--context <lines>` | Context lines in code diffs (whole number, default 3; `0` is allowed). |
 | `--fail-on <severity>` | As for `scan`. |
 
+`diff` also prints the recognised libraries with their known vulnerabilities and a "Library changes since the approved baseline" list (`jQuery 3.5.1 → 3.7.1`, downgrades marked). `--json` adds `libraries` (inventory and database status) and `libraryChanges`. See [libraries.md](libraries.md).
+
+## `thirdsentry vulndb`
+
+Manage the JavaScript library vulnerability database (retire.js format, see [libraries.md](libraries.md)).
+
+| Command | Description |
+| --- | --- |
+| `vulndb update [--url <url>]` | Download the database into `.thirdsentry/cache/vulndb/`: size-capped, schema-validated, written atomically with metadata (source URL, fetch time, SHA-256). **Needs internet access** through the SSRF-safe client; run it where egress is allowed, not in the analyzer or `tools` containers (see [docker.md](docker.md#vulnerability-database-updates)). A failed update keeps the previous database. |
+| `vulndb status` | Show which database the analyzer would use (cached download or bundled seed), its age and any warnings. |
+
 ## `thirdsentry report`
 
 Regenerate reports from the latest (or a given) scan without scanning again.

@@ -45,6 +45,10 @@ function addHash(list: ApprovedHash[], hash: ApprovedHash): ApprovedHash[] {
   return list.some((h) => sameHash(h, hash)) ? list : [...list, hash];
 }
 
+function librariesOf(r: ScriptResource): { libraries?: Array<{ name: string; version: string }> } {
+  return r.libraries?.length ? { libraries: r.libraries.map((l) => ({ name: l.name, version: l.version })) } : {};
+}
+
 /** Collapse scan resources (one per identity+hash) into baseline resources (one per identity). */
 export function baselineResourcesFrom(resources: readonly ScriptResource[], at: string): BaselineResource[] {
   const byIdentity = new Map<string, BaselineResource>();
@@ -57,6 +61,7 @@ export function baselineResourcesFrom(resources: readonly ScriptResource[], at: 
         dynamic: existing.dynamic || r.dynamic,
         approvedHashes: addHash(existing.approvedHashes, approvedHashFor(r, at)),
         ...(r.indicators?.analyzed ? { indicators: mergeIndicators(existing.indicators, r.indicators.counts) } : {}),
+        ...librariesOf(r),
       });
       continue;
     }
@@ -73,6 +78,7 @@ export function baselineResourcesFrom(resources: readonly ScriptResource[], at: 
       dynamic: r.dynamic,
       approvedHashes: [approvedHashFor(r, at)],
       ...(r.indicators?.analyzed ? { indicators: { ...r.indicators.counts } } : {}),
+      ...librariesOf(r),
     });
   }
   return [...byIdentity.values()].sort((a, b) => a.identity.localeCompare(b.identity));

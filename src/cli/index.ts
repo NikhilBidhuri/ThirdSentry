@@ -11,6 +11,7 @@ import { registerAlert } from './commands/alert.js';
 import { registerPipeline } from './commands/pipeline.js';
 import { registerCspLint } from './commands/csp-lint.js';
 import { registerCleanup } from './commands/cleanup.js';
+import { registerVulnDb } from './commands/vulndb.js';
 import { color } from './output.js';
 import { lockStorageFor, releaseStorageLock } from './context.js';
 
@@ -39,6 +40,7 @@ export function buildProgram(): Command {
   registerAlert(program);
   registerCspLint(program);
   registerCleanup(program);
+  registerVulnDb(program);
   registerPipeline(program);
   return program;
 }

@@ -21,6 +21,35 @@ export interface SiteComparisonSummary {
   readonly findings: number;
 }
 
+export interface LibraryDbSummary {
+  readonly source: 'bundled-seed' | 'cache';
+  readonly sourceUrl?: string;
+  readonly fetchedAt?: string;
+  readonly sha256?: string;
+  readonly ageDays?: number;
+  readonly libraries: number;
+  readonly advisories: number;
+  readonly stale: boolean;
+  readonly warnings: readonly string[];
+}
+
+export interface LibraryInventoryItem {
+  readonly site: string;
+  readonly name: string;
+  readonly version: string;
+  readonly method: 'banner' | 'code' | 'url' | 'content-hash';
+  readonly confidence: 'low' | 'medium' | 'high';
+  /** Resource URLs (or identities) where it was recognised. */
+  readonly resources: readonly string[];
+  /** Advisory ids (CVE-... or ADV-...) that affect this version. */
+  readonly advisories: readonly string[];
+}
+
+export interface LibraryReport {
+  readonly db: LibraryDbSummary;
+  readonly inventory: readonly LibraryInventoryItem[];
+}
+
 /** The analysis report: scan facts + comparison with baselines + findings. */
 export interface AnalysisReport {
   readonly schemaVersion: 1;
@@ -39,6 +68,8 @@ export interface AnalysisReport {
   readonly findingCounts: Readonly<Record<Severity, number>>;
   readonly highestSeverity: Severity | 'none';
   readonly coverageLimitations: readonly string[];
+  /** Recognised JavaScript libraries and vulnerability database status (absent when libraries.detect is off). */
+  readonly libraries?: LibraryReport;
   /** Plain-language summary for non-specialists. */
   readonly headline: string;
 }

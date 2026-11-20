@@ -40,6 +40,8 @@ export const BaselineResourceSchema = z
     approvedHashes: z.array(ApprovedHashSchema).min(1).max(100),
     /** Behaviour indicators (rule id → count) of the approved version (Phase 3). */
     indicators: z.record(z.string().max(128), z.number().int().min(0)).optional(),
+    /** Known libraries (name, version) recognised in the approved version; used to explain version changes. */
+    libraries: z.array(z.object({ name: z.string().max(100), version: z.string().max(40) }).strict()).max(20).optional(),
   })
   .strict();
 

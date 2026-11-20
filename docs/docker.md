@@ -25,9 +25,10 @@ The Docker deployment runs ThirdSentry as four containers, one per trust boundar
 | --- | --- | --- | --- |
 | `egress-proxy` | `scan-internal` + `egress` | config (ro), **proxy-events (rw)** | none |
 | `scanner` | `scan-internal` only (no internet route) | config (ro), evidence volume (not proxy-events) | none |
-| `analyzer` | none | config (ro), **baselines (ro)**, evidence (ro), **proxy-events (ro)**, reports, state, cache | none |
+| `analyzer` | none | config (ro), **baselines (ro)**, evidence (ro), **proxy-events (ro)**, reports, state, cache, **vulndb (ro)** | none |
 | `alerter` | `egress` | config (ro), reports (ro), state | `.env` |
-| `tools` | none | config (ro), baselines (rw), reports, state, cache | none |
+| `tools` | none | config (ro), baselines (rw), reports, state, cache, **vulndb (ro)** | none |
+| `vulndb-updater` (on demand) | `egress` | config (ro), **vulndb (rw)** and nothing else | none |
 
 All containers run as the unprivileged `pwuser`, with a read-only root filesystem, all Linux capabilities dropped, `no-new-privileges`, memory/CPU/PID limits and private `/tmp`. No host directories other than your project's `thirdsentry.yml` and baselines are mounted.
 
@@ -91,6 +92,18 @@ Reports are kept in the `reports` volume. To copy them out:
 ```bash
 docker compose run --rm --entrypoint sh tools -c 'cat /work/.thirdsentry/reports/report.html' > report.html
 ```
+
+## Vulnerability database updates
+
+Library recognition and CVE lookup ([libraries.md](libraries.md)) use a retire.js database that is downloaded by `thirdsentry vulndb update`. Without it the analyzer uses a small bundled seed and every report says so. Because the analyzer and `tools` have no network, the update runs in its own short-lived service:
+
+```bash
+docker compose run --rm vulndb-updater       # download, validate, install; then it exits
+```
+
+Why a separate service rather than the alerter or `tools`: the alerter holds your alert credentials, and giving `tools` a network would remove the guarantee that nothing that can write baselines can reach the internet. `vulndb-updater` has the narrowest possible footprint: egress network only, no secrets, no baselines, reports or state, a read-only root filesystem, and write access to one volume (`vulndb`) that the analyzer and `tools` mount **read-only**. It uses the SSRF-safe client, caps the download, validates it against a strict schema and writes it atomically, so a failed or hostile download leaves the previous database in place. The analyzer treats the file as untrusted input regardless (strict schema, regex safeguards).
+
+Schedule it daily or weekly (see [cron.md](cron.md)); reports warn when the database is older than `libraries.maxDbAgeDays` (default 30). Check the state with `docker compose run --rm tools vulndb status`.
 
 ## Environment variables
 

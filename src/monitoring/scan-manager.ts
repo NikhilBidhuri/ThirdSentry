@@ -3,6 +3,7 @@ import type { CollectRequest } from '../browser/collector.js';
 import { newScanId } from '../utils/scan-id.js';
 import { createNetworkPolicy, type ResolvedConfig, type ResolvedSite } from '../config/loader.js';
 import { processEvidence, type ProcessedScan } from '../analysis/evidence-processor.js';
+import { loadLibraryDb, type LibraryDb } from '../analysis/libraries/vulndb.js';
 import { analyzeResources } from '../analysis/script-analysis.js';
 import { effectivePort, validateTargetUrlWithDns } from '../security/url-validator.js';
 import { runIsolatedCollection, validateEvidence } from '../security/worker-sandbox.js';
@@ -89,7 +90,7 @@ export async function collect(resolved: ResolvedConfig, request: CollectRequest,
  * while analysing one script is recorded on that script and never aborts the
  * scan (the analyser itself is size-bounded by analysis.maxScriptBytes).
  */
-function analyzeAll(resolved: ResolvedConfig, result: ScanResult, contents: ReadonlyMap<string, Buffer>): void {
+function analyzeAll(resolved: ResolvedConfig, result: ScanResult, contents: ReadonlyMap<string, Buffer>, libraryDb?: LibraryDb): void {
   const groups = new Map<string, ScriptResource[]>();
   for (const r of result.sites.flatMap((s) => s.resources)) {
     const key = r.hashes.sha256 ?? `\u0000${r.identity}`;
@@ -99,7 +100,7 @@ function analyzeAll(resolved: ResolvedConfig, result: ScanResult, contents: Read
   }
   for (const group of groups.values()) {
     try {
-      analyzeResources(group, contents, resolved.config);
+      analyzeResources(group, contents, resolved.config, libraryDb);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       getLogger('analysis').warn({ resource: group[0]?.identity, err: message }, 'static analysis failed for a script; continuing');
@@ -161,7 +162,8 @@ export async function persistScan(resolved: ResolvedConfig, evidence: ScanEviden
   });
   await saveScanResult(resolved.paths, processed.result, { updateLatest: false });
   await saveScreenshots(resolved.paths, processed.screenshots);
-  analyzeAll(resolved, processed.result, processed.contents);
+  const libraryDb = resolved.config.libraries.detect ? await loadLibraryDb(resolved.paths.cache, { maxAgeDays: resolved.config.libraries.maxDbAgeDays }) : undefined;
+  analyzeAll(resolved, processed.result, processed.contents, libraryDb);
   const scanPath = await saveScanResult(resolved.paths, processed.result);
   const retain = await contentToRetain(resolved, processed.result, processed.contents);
   if (retain.size > 0) {

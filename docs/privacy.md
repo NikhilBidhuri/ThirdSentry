@@ -30,7 +30,7 @@ ThirdSentry visits your pages as an anonymous visitor (fresh browser context, no
 
 ## What goes into Git
 
-`thirdsentry init` creates `.thirdsentry/.gitignore`, which excludes `reports/`, `cache/`, `state/` and `evidence/`. Only `thirdsentry.yml` and `.thirdsentry/baselines/` are meant to be committed. Baselines contain approved script identities, URLs, hashes, domains and indicator counts, but no code.
+`thirdsentry init` creates `.thirdsentry/.gitignore`, which excludes `reports/`, `cache/`, `state/` and `evidence/`. Only `thirdsentry.yml` and `.thirdsentry/baselines/` are meant to be committed. Baselines contain approved script identities, URLs, hashes, domains and indicator counts and the names and versions of recognised libraries, but no code. The downloaded vulnerability database (`.thirdsentry/cache/vulndb/`) is public data and contains nothing about your sites.
 
 ## Retention
 

@@ -16,6 +16,7 @@ ThirdSentry visits your pages in a real browser, records every script that runs,
 - **Approved baselines** stored as Git-friendly JSON. Scans never approve anything automatically.
 - **Change detection**: new, removed and modified scripts, new third-party domains, redirect changes, iframe origin changes and new outbound destinations.
 - **Static analysis** with Babel ASTs for behaviours worth reviewing (eval, script injection, cookie/storage/form access, beacons, WebSockets, obfuscation, and sensitive-data-plus-transmission combinations), with explainable risk scoring.
+- **Known libraries and CVEs**: recognises libraries and versions (jQuery, Lodash, Bootstrap, ...) offline from banners, code and URLs, explains version changes, and flags known vulnerabilities from the retire.js database ([docs](docs/libraries.md)).
 - **Reports** in JSON, SARIF (GitHub Code Scanning) and HTML; **alerts** via Slack, webhooks, GitHub Issues and email.
 - **CSP linter** for Content-Security-Policy headers.
 - **Hardened by design**: the browser is treated as hostile. All browser traffic goes through an egress proxy that blocks private, loopback, link-local and cloud-metadata addresses per connection (defeating DNS rebinding), and the browser runs in a separate process (or container) without access to your secrets.
@@ -65,6 +66,7 @@ my-store https://www.example.com/ — complete (chromium 140.0.7339.16)
 | [CLI reference](docs/cli.md) | commands, flags and exit codes |
 | [Baselines](docs/baselines.md) | approving and updating what is expected |
 | [Detection rules](docs/rules.md) | static-analysis rules and risk scoring |
+| [Libraries and CVEs](docs/libraries.md) | library detection and the vulnerability database |
 | [Alerts](docs/alerts.md) | Slack, webhook, GitHub Issues, email |
 | [GitHub Actions](docs/github-actions.md) | scheduled scans in CI |
 | [Docker](docs/docker.md) and [cron](docs/cron.md) | self-hosted scheduled scans |

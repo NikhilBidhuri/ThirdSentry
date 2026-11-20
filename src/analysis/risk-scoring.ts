@@ -57,6 +57,10 @@ export const SIGNALS = {
   'suspicious-domain': { weight: 30, description: 'The domain matches a configured reputation warning (domains.suspicious)', suspicious: true },
   'ip-address-destination': { weight: 15, description: 'The destination is a raw IP address rather than a domain name', suspicious: true },
   'script-references-new-destination': { weight: 25, description: 'The changed script itself references the new outbound destination', suspicious: true },
+  'vulnerable-library-low': { weight: 20, description: 'A loaded library has a known low-severity vulnerability' },
+  'vulnerable-library-medium': { weight: 40, description: 'A loaded library has a known medium-severity vulnerability' },
+  'vulnerable-library-high': { weight: 60, description: 'A loaded library has a known high-severity vulnerability' },
+  'vulnerable-library-critical': { weight: 80, description: 'A loaded library has a known critical vulnerability' },
 } as const satisfies Record<string, SignalDefinition>;
 
 export type SignalId = keyof typeof SIGNALS | `rule:${string}` | `new-rule:${string}` | (string & {});

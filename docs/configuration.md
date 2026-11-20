@@ -191,6 +191,18 @@ Static behaviour analysis is described in [rules.md](rules.md).
 | `rules.<id>.weight` | from severity | Risk weight of a new match. |
 | `rules.<id>.ignoreResources` | `[]` | URL/identity globs the rule ignores. |
 
+## `libraries`
+
+Recognition of known JavaScript libraries and CVE lookup, described in [libraries.md](libraries.md).
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `detect` | `true` | Recognise libraries and versions (offline) and show them in reports and `diff`. Needs `analysis.enabled`. |
+| `vulnerabilities` | `true` | Raise `vulnerable-library` findings for known advisories. |
+| `minSeverity` | `low` | Only advisories at or above this severity (`low`, `medium`, `high`, `critical`) are reported. |
+| `maxDbAgeDays` | `30` | Warn when the cached vulnerability database (`thirdsentry vulndb update`) is older than this. |
+| `knownHashes` | `[]` | Exact SHA-256 matches: `[{ sha256, name, version }]` (up to 1000). |
+
 ## `domains`
 
 | Key | Default | Description |
