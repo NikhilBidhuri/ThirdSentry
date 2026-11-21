@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ThirdSentry demo stage</title>
+<!-- Rendered by scripts/demo/update-assets.mjs with Playwright; every GIF frame is a screenshot of this page. -->
+<style>
+  :root { --bg:#0b1020; --term:#0f1629; --bar:#1a2238; --text:#d6deeb; --gray:#7f8aa3; --red:#ff6b6b; --green:#5fd38d;
+          --yellow:#f5c26b; --blue:#6ea8fe; --magenta:#d78bf7; --cyan:#4fd1e8; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background: radial-gradient(1200px 600px at 20% 0%, #1b2a55 0%, var(--bg) 60%); overflow:hidden; }
+  .window { position:absolute; inset:18px; border-radius:12px; overflow:hidden; box-shadow: 0 20px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.06); display:flex; flex-direction:column; }
+  .bar { height:34px; background: var(--bar); display:flex; align-items:center; gap:8px; padding:0 14px; flex:none; }
+  .dot { width:12px; height:12px; border-radius:50%; } .r { background:#ff5f57; } .y { background:#febc2e; } .g { background:#28c840; }
+  .title { flex:1; text-align:center; color: var(--gray); font: 12px/1 ui-monospace, "Cascadia Mono", Consolas, monospace; margin-right:52px; }
+  #terminal .body { flex:1; background: var(--term); padding:14px 18px; display:flex; flex-direction:column; justify-content:flex-end; overflow:hidden; }
+  #out { margin:0; color: var(--text); font: 13px/1.45 ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace; white-space: pre; }
+  .prompt { color: var(--green); } .cursor { display:inline-block; width:8px; height:15px; background: var(--text); vertical-align:-3px; }
+  .b { font-weight:700; } .d { opacity:.7; }
+  .c31 { color: var(--red); } .c32 { color: var(--green); } .c33 { color: var(--yellow); } .c34 { color: var(--blue); }
+  .c35 { color: var(--magenta); } .c36 { color: var(--cyan); } .c90 { color: var(--gray); }
+  #caption { position:absolute; left:50%; top:50%; transform: translate(-50%, -50%); width: 78%; display:none;
+             background: rgba(40, 8, 12, .96); border:1px solid #ff6b6b; border-radius:12px; padding:20px 26px; color:#ffe3e3;
+             font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+  #caption h2 { margin:0 0 10px; font-size:19px; color:#fff; }
+  #caption ul { margin:0; padding-left:20px; } #caption li { margin:3px 0; }
+  #caption code { font: 13px ui-monospace, Consolas, monospace; color:#ffb4b4; }
+  #browser { display:none; background:#fff; }
+  #browser .bar { background:#e9ecf3; } #browser .title { color:#4b5563; }
+  .url { flex:1; margin-right:52px; background:#fff; border-radius:6px; padding:5px 10px; color:#4b5563; font: 12px system-ui, sans-serif; }
+  #viewport { flex:1; position:relative; overflow:hidden; background:#f7f7f8; }
+  #report { position:absolute; left:0; top:0; width:100%; height:5200px; border:0; transition:none; }
+</style>
+</head>
+<body>
+<div class="window" id="terminal">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">acme-outfitters — thirdsentry</span></div>
+  <div class="body"><pre id="out"></pre></div>
+</div>
+<div class="window" id="browser">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="url">report.html — ThirdSentry report</span></div>
+  <div id="viewport"><iframe id="report" title="report"></iframe></div>
+</div>
+<div id="caption"></div>
+<script>
+  const out = document.getElementById('out');
+  let lines = [];
+  let current = null; // the line being typed
+  function render() {
+    const typed = current === null ? [] : [`<span class="prompt">$</span> ${current}<span class="cursor"></span>`];
+    out.innerHTML = [...lines, ...typed].slice(-40).join('\n');
+  }
+  window.stage = {
+    startTyping() { current = ''; render(); },
+    type(textHtml) { current = textHtml; render(); },
+    commit() { lines.push(`<span class="prompt">$</span> ${current}`); current = null; render(); },
+    prompt() { current = ''; render(); },
+    add(htmlLines) { lines.push(...htmlLines); render(); },
+    clear() { lines = []; current = null; render(); },
+    caption(html) {
+      const c = document.getElementById('caption');
+      c.innerHTML = html ?? '';
+      c.style.display = html ? 'block' : 'none';
+      document.getElementById('terminal').style.filter = html ? 'brightness(.35)' : '';
+    },
+    showBrowser(src) {
+      document.getElementById('terminal').style.display = 'none';
+      document.getElementById('browser').style.display = 'flex';
+      const f = document.getElementById('report');
+      return new Promise((resolve) => { f.onload = resolve; f.src = src; });
+    },
+    scrollReport(y) { document.getElementById('report').style.transform = `translateY(${-y}px)`; },
+  };
+  render();
+</script>
+</body>
+</html>

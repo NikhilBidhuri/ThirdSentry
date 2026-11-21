@@ -49,7 +49,16 @@ th{color:var(--muted);font-weight:600}code,.mono{font-family:ui-monospace,SFMono
 details{margin-top:8px}summary{cursor:pointer;color:var(--muted)}ul{margin:6px 0;padding-left:20px}
 .finding header{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.next{border-left:3px solid var(--low);padding-left:10px;margin-top:8px}
 .suppressed{opacity:.65}
+.brand{display:flex;align-items:center;gap:10px}.brand svg{flex:none}
+.headline{border-left:4px solid var(--border)}
+.finding{border-left:4px solid var(--border)}
+.lvl-critical{border-left-color:var(--crit)}.lvl-high{border-left-color:var(--high)}.lvl-medium{border-left-color:var(--med)}.lvl-low{border-left-color:var(--low)}.lvl-info{border-left-color:var(--info)}
+.badge.sev-critical{background:color-mix(in srgb,var(--crit) 12%,transparent)}.badge.sev-high{background:color-mix(in srgb,var(--high) 12%,transparent)}
+.stat.hot{border-color:currentColor;background:color-mix(in srgb,currentColor 7%,var(--card))}.stat.hot b{font-size:26px}
 `;
+
+/** Small shield mark shown next to the report title (inline SVG: no external resources). */
+const LOGO = `<svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 6.5v8.2c0 7.3 5.1 13.2 12 15.3 6.9-2.1 12-8 12-15.3V6.5L16 2Z" fill="#2a5bd7"/><path d="M8.5 16s3-5 7.5-5 7.5 5 7.5 5-3 5-7.5 5-7.5-5-7.5-5Z" fill="#fff"/><circle cx="16" cy="16" r="2.6" fill="#2a5bd7"/></svg>`;
 
 function badge(severity: Severity): string {
   return `<span class="badge sev-${escapeHtml(severity)}">${SEVERITY_LABEL[severity] ?? escapeHtml(severity)}</span>`;
@@ -63,7 +72,7 @@ function renderFinding(f: Finding): string {
   // Tolerate finding kinds this version does not know (missing optional details).
   const signals = (f.signals ?? []).map((s) => `<li><span class="mono">${s.weight >= 0 ? '+' : ''}${s.weight}</span> ${e(s.description)}</li>`).join('');
   const evidence = (f.evidence ?? []).map((x) => `<tr><th>${e(x.label)}</th><td class="mono">${e(x.value)}</td></tr>`).join('');
-  return `<article class="card finding${f.suppressed ? ' suppressed' : ''}" id="${e(f.id)}">
+  return `<article class="card finding lvl-${e(f.severity)}${f.suppressed ? ' suppressed' : ''}" id="${e(f.id)}">
 <header>${badge(f.severity)}<h3>${e(f.title || f.kind)}</h3><span class="muted">confidence ${e(f.confidence)} · ${e(CATEGORY_TEXT[f.category] ?? f.category)} · <span class="mono">${e(f.id)}</span>${f.status ? ` · ${e(f.status)}` : ''}</span></header>
 ${f.suppressed ? `<p class="muted">Suppressed: ${e(f.suppressed.reason)}${f.suppressed.expires ? ` (until ${e(f.suppressed.expires)})` : ''}</p>` : ''}
 ${f.resourceUrl ? `<p class="mono">${e(f.resourceUrl)}</p>` : ''}
@@ -145,8 +154,12 @@ export function renderHtmlReport(report: AnalysisReport, scan?: ScanResult): str
   const suppressed = report.findings.filter((f) => f.suppressed);
   const statusClass = report.scanStatus === 'complete' ? 'ok' : report.scanStatus === 'partial' ? 'warn' : 'bad';
   const counts = (['critical', 'high', 'medium', 'low', 'info'] as const)
-    .map((sev) => `<div class="stat"><span class="sev-${sev}">${SEVERITY_LABEL[sev]}</span><b>${report.findingCounts[sev]}</b></div>`)
+    .map((sev) => {
+      const n = report.findingCounts[sev];
+      return `<div class="stat${n > 0 && sev !== 'info' ? ` hot sev-${sev}` : ''}"><span class="sev-${sev}">${SEVERITY_LABEL[sev]}</span><b>${n}</b></div>`;
+    })
     .join('');
+  const top = (['critical', 'high', 'medium', 'low'] as const).find((sev) => active.some((f) => f.severity === sev));
   const siteRows = report.sites
     .map(
       (site) =>
@@ -168,9 +181,9 @@ export function renderHtmlReport(report: AnalysisReport, scan?: ScanResult): str
 <meta name="referrer" content="no-referrer">
 <title>ThirdSentry report</title><style>${STYLE}</style></head>
 <body><main>
-<h1>ThirdSentry report</h1>
+<h1 class="brand">${LOGO}ThirdSentry report</h1>
 <p class="muted">Scan <span class="mono">${e(report.scanId)}</span> · ${e(report.scanStartedAt)} → ${e(report.scanFinishedAt)} · scan status <b class="${statusClass}">${e(report.scanStatus)}</b> · ThirdSentry ${e(report.toolVersion)}</p>
-<div class="card headline">${e(report.headline)}</div>
+<div class="card headline${top ? ` lvl-${top}` : ''}">${e(report.headline)}</div>
 <p class="muted">ThirdSentry reports changes and behaviour worth reviewing. A finding is a reason to look, not proof of compromise; "no findings" does not prove that scripts are safe. See the coverage limitations below.</p>
 
 <h2>Summary</h2>

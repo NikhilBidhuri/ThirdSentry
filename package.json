@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "description": "Watch the code you don't control. Open-source third-party JavaScript security monitoring.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NikhilBidhuri/ThirdSentry.git"
+  },
+  "homepage": "https://github.com/NikhilBidhuri/ThirdSentry#readme",
+  "bugs": {
+    "url": "https://github.com/NikhilBidhuri/ThirdSentry/issues"
+  },
   "type": "module",
   "bin": {
     "thirdsentry": "dist/cli/bin.js"
@@ -13,7 +21,8 @@
     "dist",
     "README.md",
     "LICENSE",
-    "docs"
+    "docs",
+    "!docs/assets"
   ],
   "engines": {
     "node": ">=20.11"
@@ -36,7 +45,9 @@
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "demo": "node demo/run.mjs",
+    "demo:assets": "node scripts/demo/update-assets.mjs"
   },
   "dependencies": {
     "@babel/generator": "^8.1.2",
@@ -57,6 +68,8 @@
     "@types/node": "^24.19.2",
     "@types/nodemailer": "^8.0.2",
     "eslint": "^10.15.0",
+    "gifenc": "^1.0.3",
+    "pngjs": "^7.0.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.73.0",
     "vitest": "^4.1.12"

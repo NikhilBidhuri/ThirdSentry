@@ -1,30 +1,109 @@
+<div align="center">
+
+<img src="docs/assets/logo.svg" width="96" alt="ThirdSentry logo">
+
 # ThirdSentry
 
-**Watch the code you don't control.** ThirdSentry is an open-source, self-hostable monitor that detects unexpected or suspicious changes in the third-party JavaScript running on your websites.
+**Watch the code you don't control.**
 
-Your pages load code from analytics vendors, tag managers, payment providers, chat widgets and ad networks. You do not control that code, and it can change at any moment: a vendor ships a bad update, its CDN is compromised, or a script starts sending data somewhere new. Your own repository has not changed, yet your users are running different code.
+Open-source, self-hosted monitoring for the third-party JavaScript on your website.<br>
+It catches Magecart-style skimmers, tampered vendor scripts and checkout changes before your customers do.
 
-ThirdSentry visits your pages in a real browser, records every script that runs, hashes it, and compares it with a baseline you approved. When something changes, it tells you what changed, where, and why it might matter.
+[![CI](https://github.com/NikhilBidhuri/ThirdSentry/actions/workflows/ci.yml/badge.svg)](https://github.com/NikhilBidhuri/ThirdSentry/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Node.js >= 20.11](https://img.shields.io/badge/node-%3E%3D20.11-339933?logo=node.js&logoColor=white)](docs/installation.md)
+[![Playwright](https://img.shields.io/badge/real%20browser-Playwright-2EAD33?logo=playwright&logoColor=white)](docs/architecture.md)
+[![PCI DSS v4.0](https://img.shields.io/badge/PCI%20DSS%20v4.0-6.4.3%20%C2%B7%2011.6.1-orange)](docs/pci.md)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-> ThirdSentry is a **monitoring and detection** tool. It does not block or remove malicious code, it cannot prove that code is safe, and it does not by itself make you PCI DSS compliant. It gives you evidence and early warning so that people can investigate.
+[**Try the demo**](#-try-it-in-60-seconds) · [**Sample report**](#-the-report) · [**Quick start**](#-quick-start) · [**Docs**](#-documentation)
 
-## What it does
+<br>
 
-- **Real-browser scanning** with Playwright (Chromium, Firefox, WebKit, and mobile emulation).
-- **Discovers executable code**: external and inline scripts, ES modules and `import()`, runtime-injected scripts, scripts inside iframes, web/shared/service workers, `blob:` and `data:` scripts, and WebAssembly.
-- **Hashes everything**: SHA-256 of the exact bytes, an SRI value, and a second hash of conservatively normalised code, so formatting-only changes can be told apart from code changes.
-- **Approved baselines** stored as Git-friendly JSON. Scans never approve anything automatically.
-- **Change detection**: new, removed and modified scripts, new third-party domains, redirect changes, iframe origin changes and new outbound destinations.
-- **Script policies** (pin, path-versions, domain-only) for vendors whose scripts rotate: explicit, expiring and reviewable, and they never hide new suspicious behaviour ([docs/policies.md](docs/policies.md)).
-- **Static analysis** with Babel ASTs for behaviours worth reviewing (eval, script injection, cookie/storage/form access, beacons, WebSockets, obfuscation, and sensitive-data-plus-transmission combinations), with explainable risk scoring.
-- **Logged-in journeys**: scripted multi-step flows (login, cart, checkout) with stable `journey:<name>/<capture>` page keys, secrets only via `${THIRDSENTRY_SECRET_<NAME>}`, and a guard against submitting payment forms.
-- **Known libraries and CVEs**: recognises libraries and versions (jQuery, Lodash, Bootstrap, ...) offline from banners, code and URLs, explains version changes, and flags known vulnerabilities from the retire.js database ([docs](docs/libraries.md)).
-- **Reports** in JSON, SARIF (GitHub Code Scanning) and HTML; **alerts** via Slack, Microsoft Teams, PagerDuty, webhooks, GitHub Issues and email.
-- **CSP linter** for Content-Security-Policy headers.
-- **PCI DSS v4.0 support**: a script authorization inventory (6.4.3, `thirdsentry inventory`), security-header change detection and payment-form integrity checks (11.6.1). See [docs/pci.md](docs/pci.md).
-- **Hardened by design**: the browser is treated as hostile. All browser traffic goes through an egress proxy that blocks private, loopback, link-local and cloud-metadata addresses per connection (defeating DNS rebinding), and the browser runs in a separate process (or container) without access to your secrets.
+<img src="docs/assets/demo.gif" width="880" alt="ThirdSentry approves a clean checkout, then catches a skimmer injected into a payment vendor's script, a lookalike-domain loader, a tampered payment form and a removed CSP">
 
-## Quick start
+<sub>A real run of <code>npm run demo</code>: approve a clean checkout, compromise a vendor script, scan again.</sub>
+
+</div>
+
+---
+
+## Why
+
+Your checkout page runs code from analytics vendors, tag managers, payment SDKs, chat widgets and A/B tools. **You don't review that code, and it can change at any time.** Your own repository stays the same, but your customers start running different code. That is how these incidents happened:
+
+- **British Airways (2018):** a modified script on the payment page skimmed card data for two weeks.
+- **Ticketmaster (2018):** a compromised third-party chatbot script ran on payment pages.
+- **polyfill.io (2024):** a widely used CDN domain changed hands and started serving malicious code to more than 100,000 sites.
+
+ThirdSentry opens your pages in a **real browser**, records **every script that runs**, hashes it, analyses what it does, and compares the result with a **baseline you approved**. When something changes, it explains what changed, where, how risky the change looks and what to do next.
+
+| | CSP alone | SRI alone | **ThirdSentry** |
+| --- | :-: | :-: | :-: |
+| Notices that an allowed vendor's script **content** changed | ❌ | ✅ for pinned files only, and breaks on every legitimate update | ✅ |
+| Shows **what the new code does** (reads card fields, beacons, `eval`, obfuscation) | ❌ | ❌ | ✅ |
+| Covers **runtime-injected** scripts, iframes, workers, `blob:` scripts | partly | ❌ | ✅ |
+| Detects checkout **form tampering** and **weakened security headers** | ❌ | ❌ | ✅ |
+| Gives you an audit trail for **PCI DSS 6.4.3 / 11.6.1** | ❌ | ❌ | ✅ |
+
+> ThirdSentry is a **monitoring and detection** tool. It does not block or remove malicious code, it cannot prove that code is safe, and it does not by itself make you PCI DSS compliant. It gives you evidence and early warning so that people can investigate. It works well **alongside** CSP and SRI.
+
+## 🚀 Try it in 60 seconds
+
+The demo runs a small local shop, "Acme Outfitters", on fake `.test` hostnames on `127.0.0.1`. It approves the clean checkout, then simulates a Magecart-style compromise and scans again. Nothing leaves your machine.
+
+```bash
+git clone https://github.com/NikhilBidhuri/ThirdSentry.git && cd ThirdSentry
+npm ci && npx playwright install chromium
+npm run demo -- --open          # --open shows the HTML report in your browser when done
+```
+
+<details>
+<summary><b>What does the simulated attack do, and what catches it?</b></summary>
+
+<br>
+
+| # | Attack (real-world pattern) | ThirdSentry finding | Severity |
+| - | --- | --- | :-: |
+| 1 | Card skimmer appended to the payment vendor's `pay.js` (supply-chain compromise) | `resource-modified` + new behaviour `TS-SENSITIVE-FIELD-ACCESS`, `TS-EXFIL-COMBINATION` | 🔴 critical |
+| 2 | Obfuscated loader from the lookalike domain `cdn-assets-cloud.test` runs `eval` (polyfill.io style) | `resource-added` + `TS-OBFUSCATION`, `TS-EVAL`; `new-script-domain` | 🔴 critical |
+| 3 | Stolen data beaconed to `collect.exfil.test` | `new-outbound-domain` | 🟡 medium |
+| 4 | Checkout form re-targeted to the attacker, with an extra "card PIN" field | `payment-form-changed` (PCI DSS 11.6.1) | 🔴 critical |
+| 5 | `Content-Security-Policy` and `X-Frame-Options` removed from `/checkout` | `security-header-changed` | 🔴 critical |
+
+The analytics tag and first-party code don't change, so they aren't flagged. The scan exits with code `1`, which fails a CI job. See [demo/README.md](demo/README.md) for more.
+
+</details>
+
+## 📊 The report
+
+Every scan writes **JSON**, **SARIF** (for GitHub Code Scanning) and a self-contained **HTML** report. The HTML report contains no scripts and loads nothing from the network, so it is safe to open.
+
+<div align="center">
+<a href="https://htmlpreview.github.io/?https://github.com/NikhilBidhuri/ThirdSentry/blob/main/docs/assets/sample-report.html"><img src="docs/assets/report-screenshot.png" width="760" alt="ThirdSentry HTML report showing four critical findings"></a>
+
+<sub><a href="https://htmlpreview.github.io/?https://github.com/NikhilBidhuri/ThirdSentry/blob/main/docs/assets/sample-report.html">Open the full sample report</a> (or download <a href="docs/assets/sample-report.html"><code>docs/assets/sample-report.html</code></a> and open it locally)</sub>
+</div>
+
+Each finding explains itself: what changed, a severity and confidence, **why it scored that way** (for example `+25 content of an approved third-party script changed`, `+22 accesses payment or password fields`), and a concrete next step, including the exact command to approve the change if it turns out to be legitimate.
+
+## ✨ Features
+
+| | |
+| --- | --- |
+| 🌐 **Real-browser scanning** | Playwright with Chromium, Firefox, WebKit and mobile emulation. [Logged-in journeys](docs/configuration.md) (login → cart → checkout), with a guard against submitting payment forms. |
+| 🔎 **Sees all executable code** | External and inline scripts, ES modules and `import()`, runtime-injected scripts, iframes, web/shared/service workers, `blob:`/`data:` scripts and WebAssembly. |
+| #️⃣ **Hashes everything** | SHA-256 of the exact bytes, an SRI value, and a normalised hash that separates formatting-only changes from code changes. |
+| ✅ **Approved baselines** | Git-friendly JSON with an audit trail. [Scans never approve anything automatically.](docs/baselines.md) |
+| 🧠 **Behaviour analysis** | [Babel AST rules](docs/rules.md) for `eval`, script injection, cookie/storage/form access, beacons, WebSockets, obfuscation and "sensitive data + transmission" combinations. Every score is explained. |
+| 🔁 **Rotating vendor scripts** | [Script policies](docs/policies.md) (pin, path-versions, domain-only) that are explicit, expiring and reviewable, and never hide new suspicious behaviour. |
+| 📚 **Libraries and CVEs** | Recognises jQuery, Lodash, Bootstrap and other libraries offline, and flags [known vulnerabilities](docs/libraries.md) from the retire.js database. |
+| 💳 **PCI DSS v4.0** | A 6.4.3 script inventory (`thirdsentry inventory`), plus 11.6.1 detection of payment-form and security-header changes. [Docs](docs/pci.md). |
+| 🔔 **Alerts** | Slack, Microsoft Teams, PagerDuty, webhooks, GitHub Issues and email. Also a [heartbeat and Prometheus metrics](docs/monitoring.md). |
+| 🛡️ **CSP linter** | `thirdsentry csp-lint` analyses your Content-Security-Policy. [Docs](docs/csp.md). |
+| 🔒 **Hardened by design** | The browser is treated as hostile. All its traffic goes through an egress proxy that blocks private, loopback and cloud-metadata addresses on every connection, and the browser runs in a separate process or container with no access to your secrets. [Security model](docs/security.md). |
+
+## ⚡ Quick start
 
 Requirements: Node.js 20.11 or newer.
 
@@ -43,24 +122,51 @@ npx thirdsentry baseline --approve <finding-id>   # approve a reviewed change
 npx thirdsentry csp-lint https://www.example.com  # analyse your Content-Security-Policy
 ```
 
-A scan prints what it found:
+## 🤖 Run it on a schedule
 
+**GitHub Actions:** scan every few hours, upload SARIF to Code Scanning, and fail or alert on high-severity changes. See the full workflow in [`examples/github-workflow.yml`](examples/github-workflow.yml).
+
+```yaml
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, security-events: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: <owner>/thirdsentry@<ref>   # pin a tag or commit SHA
+        with: { fail-on: high }
 ```
-Scan 20261118T101500Z-3f2a9c1d: complete
-  1 site(s), 2 page(s) [2 complete, 0 partial, 0 failed], 14 script resource(s) (5 first-party, 9 third-party), 6 third-party domain(s)
 
-my-store https://www.example.com/ — complete (chromium 140.0.7339.16)
-  complete   /          9 scripts, 61 requests
-  complete   /checkout  7 scripts, 44 requests
+**Self-hosted:** use [Docker Compose](docs/docker.md), with the browser, analyser and alerter in separate containers and no network access for the analyser, or [cron/systemd](docs/cron.md).
 
-  TYPE             PARTY  SHA-256        RESOURCE
-  script           3rd    9f2c4b1e07aa   https://www.googletagmanager.com/gtm.js?id=GTM-XXXX
-  inline-script    1st    41d0c3a99e12   inline:/|main|html:nth-of-type(1)>head:nth-of-type(1)>script:nth-of-type(2)
-  script           3rd    c7e1aa04b3f9   https://js.payments.example/v3/ [dynamic]
-  ...
+## 🧩 How it works
+
+```mermaid
+flowchart LR
+  cfg[thirdsentry.yml] --> worker
+  subgraph worker [Isolated browser worker]
+    pw[Playwright page] -->|all traffic| proxy[Egress proxy<br/>blocks private and metadata IPs]
+  end
+  worker -->|untrusted evidence| analysis
+  subgraph analysis [Trusted analysis]
+    direction TB
+    hash[Discover and hash scripts] --> ast[AST behaviour rules]
+    ast --> cmp[Compare with approved baseline]
+    cmp --> risk[Findings and explainable risk score]
+  end
+  analysis --> reports[JSON / SARIF / HTML]
+  analysis --> alerts[Slack / Teams / PagerDuty / ...]
+  baseline[(Approved baseline<br/>in Git)] --> cmp
 ```
 
-## Documentation
+Untrusted evidence comes from an isolated browser worker. Trusted code turns it into findings and never executes it. See [docs/architecture.md](docs/architecture.md).
+
+## 📖 Documentation
 
 | Topic | |
 | --- | --- |
@@ -82,11 +188,20 @@ my-store https://www.example.com/ — complete (chromium 140.0.7339.16)
 | [Known limitations](docs/limitations.md) | what ThirdSentry cannot see |
 | [Architecture](docs/architecture.md) | how the pieces fit together |
 | [Troubleshooting](docs/troubleshooting.md) | common problems |
-| [Contributing](CONTRIBUTING.md) | development setup and guidelines |
+
+## 🤝 Contributing
+
+Contributions are welcome, from new detection rules to docs fixes. Good places to start:
+
+- **Add or tune a detection rule** in [`src/analysis/indicator-rules.ts`](src/analysis/indicator-rules.ts). Each rule has positive and negative tests ([guide](CONTRIBUTING.md#adding-a-detection-rule)).
+- **Extend the demo attack** in [`demo/site/server.mjs`](demo/site/server.mjs). [`tests/integration/demo.test.ts`](tests/integration/demo.test.ts) checks that every simulated attack is caught.
+- **Improve the docs**, especially if something confused you when you tried ThirdSentry.
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup and ground rules. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## Project status
 
-ThirdSentry is a young project. The scanner, baselines, change detection, static analysis, reports, alerts, CSP linter, Docker pipeline and GitHub Action are implemented and covered by automated tests that run against local fixture servers. The alert integrations are tested against local mock servers, not against live Slack, GitHub or SMTP services, and the GitHub Action is not exercised by this repository's test suite. See [docs/limitations.md](docs/limitations.md) for an honest list of what ThirdSentry does not cover.
+ThirdSentry is a young project. The scanner, baselines, change detection, static analysis, reports, alerts, CSP linter, Docker pipeline and GitHub Action are implemented. They are covered by automated tests that run against local fixture servers. The alert integrations are tested against local mock servers, not against live Slack, GitHub or SMTP services. The GitHub Action is not exercised by this repository's test suite. See [docs/limitations.md](docs/limitations.md) for an honest list of what ThirdSentry does not cover.
 
 ## License
 

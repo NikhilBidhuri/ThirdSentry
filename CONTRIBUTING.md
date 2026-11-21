@@ -15,6 +15,8 @@ npm test                                 # unit + integration (local fixture ser
 
 Requirements: Node.js 20.11+.
 
+To see the whole pipeline end to end, run `npm run demo` (see [demo/README.md](demo/README.md)). If you change CLI output, the HTML report or the demo scenario, run `npm run demo:assets` to regenerate the README media in `docs/assets/` (`demo.gif`, `sample-report.html`, `report-screenshot.png`), and commit the results.
+
 On Windows, run the tests from a shell whose working directory uses an upper-case drive letter (`C:\...`), otherwise Vitest may load itself twice.
 
 Docker verification (Linux or Docker Desktop):

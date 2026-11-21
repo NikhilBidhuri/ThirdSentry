@@ -26,4 +26,13 @@ export default tseslint.config(
     files: ['eslint.config.js'],
     extends: [tseslint.configs.disableTypeChecked],
   },
+  {
+    // Plain-JavaScript demo tooling (npm run demo / demo:assets): not part of the TypeScript project.
+    files: ['demo/**/*.mjs', 'scripts/**/*.mjs'],
+    extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: {
+      sourceType: 'module',
+      globals: { process: 'readonly', Buffer: 'readonly', URL: 'readonly', console: 'readonly', setTimeout: 'readonly', window: 'readonly' },
+    },
+  },
 );
