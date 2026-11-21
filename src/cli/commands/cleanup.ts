@@ -29,7 +29,7 @@ export function registerCleanup(program: Command): void {
     .command('cleanup')
     .description('Delete old scan results, screenshots and cached script content (baselines are never touched)')
     .option('--older-than <days>', 'delete data older than this many days (default: retention.maxAgeDays)')
-    .option('--keep <n>', 'keep at most this many scan results (default: retention.maxScanReports)')
+    .option('--keep <n>', 'keep at most this many scan results per site (default: retention.maxScanReports)')
     .option('--all-content', 'delete all cached script bodies (except those referenced by baselines)')
     .option('--include-referenced', 'with --all-content: also delete content referenced by baselines (code diffs become unavailable)')
     .option('--reset-state', 'also delete finding/alert state (findings will be reported and alerted as new)')

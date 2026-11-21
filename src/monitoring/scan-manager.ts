@@ -1,12 +1,18 @@
-import { collectEvidence, newScanId, type CollectRequest } from '../browser/collector.js';
+// Type-only: the browser stack (Playwright) is loaded lazily, only when a scan collects.
+import type { CollectRequest } from '../browser/collector.js';
+import { newScanId } from '../utils/scan-id.js';
 import { createNetworkPolicy, type ResolvedConfig, type ResolvedSite } from '../config/loader.js';
 import { processEvidence, type ProcessedScan } from '../analysis/evidence-processor.js';
+import { loadLibraryDb, type LibraryDb } from '../analysis/libraries/vulndb.js';
 import { analyzeResources } from '../analysis/script-analysis.js';
 import { effectivePort, validateTargetUrlWithDns } from '../security/url-validator.js';
 import { runIsolatedCollection, validateEvidence } from '../security/worker-sandbox.js';
-import { applyRetention, ContentStore, saveScanResult, saveScreenshots } from '../storage/filesystem-store.js';
+import { applyRetention, ContentStore, saveScanResult, saveScreenshots, scriptContentMode } from '../storage/filesystem-store.js';
 import { loadBaseline } from '../baseline/baseline-manager.js';
 import type { ScanEvidence } from '../types/evidence.js';
+import type { ScanResult, ScriptResource } from '../types/index.js';
+import { assertScanSitesConfigured } from './analysis-runner.js';
+import { compareSite } from './comparison-engine.js';
 import { ConfigError, ThirdSentryError } from '../utils/errors.js';
 import { getLogger } from '../utils/logger.js';
 
@@ -73,26 +79,96 @@ export async function collect(resolved: ResolvedConfig, request: CollectRequest,
     });
   }
   log.warn('security.isolation.mode is "none": the browser runs inside the coordinator process. Use only for debugging.');
-  // Round-trip through the validator so both modes apply identical checks.
-  return validateEvidence(JSON.parse(JSON.stringify(await collectEvidence(request))));
+  const { collectEvidence } = await import('../browser/collector.js');
+  // Validate with the same schema as the isolated modes (no JSON round-trip: one
+  // string for a large scan can exceed V8's maximum string length).
+  return validateEvidence(await collectEvidence(request));
 }
 
-/** Process validated evidence and persist results (never touches baselines). */
+/**
+ * Static analysis of every captured script, grouped by content hash. A failure
+ * while analysing one script is recorded on that script and never aborts the
+ * scan (the analyser itself is size-bounded by analysis.maxScriptBytes).
+ */
+function analyzeAll(resolved: ResolvedConfig, result: ScanResult, contents: ReadonlyMap<string, Buffer>, libraryDb?: LibraryDb): void {
+  const groups = new Map<string, ScriptResource[]>();
+  for (const r of result.sites.flatMap((s) => s.resources)) {
+    const key = r.hashes.sha256 ?? `\u0000${r.identity}`;
+    const list = groups.get(key) ?? [];
+    list.push(r);
+    groups.set(key, list);
+  }
+  for (const group of groups.values()) {
+    try {
+      analyzeResources(group, contents, resolved.config, libraryDb);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      getLogger('analysis').warn({ resource: group[0]?.identity, err: message }, 'static analysis failed for a script; continuing');
+      for (const r of group) r.indicators = { analyzed: false, error: `analysis failed: ${message.slice(0, 200)}`, counts: {}, matches: [], hosts: [] };
+    }
+  }
+}
+
+/**
+ * Content hashes whose bodies are kept in the content cache.
+ *
+ *  none      nothing
+ *  all       every captured body
+ *  findings  approved versions (the "before" side of a future code diff) and
+ *            versions behind a finding (the "after" side). For a site without
+ *            a baseline yet, every script is awaiting approval, so all of its
+ *            bodies are kept.
+ */
+export async function contentToRetain(resolved: ResolvedConfig, result: ScanResult, contents: ReadonlyMap<string, Buffer>): Promise<Set<string>> {
+  const mode = scriptContentMode(resolved.config.retention);
+  if (mode === 'none') return new Set();
+  if (mode === 'all') return new Set(contents.keys());
+  const keep = new Set<string>();
+  for (const site of result.sites) {
+    let baseline;
+    try {
+      baseline = await loadBaseline(resolved.paths, site.name);
+    } catch {
+      baseline = undefined; // an invalid baseline is reported by the analysis; treat everything as pending review
+    }
+    if (!baseline) {
+      for (const r of site.resources) if (r.hashes.sha256) keep.add(r.hashes.sha256);
+      continue;
+    }
+    const approved = new Set(baseline.resources.flatMap((b) => b.approvedHashes.map((h) => h.sha256)).filter((h): h is string => h !== null));
+    for (const r of site.resources) if (r.hashes.sha256 && approved.has(r.hashes.sha256)) keep.add(r.hashes.sha256);
+    for (const c of compareSite(site, baseline, resolved.config.domains).changes) {
+      const sha = c.current?.hashes.sha256;
+      if (sha) keep.add(sha);
+    }
+  }
+  for (const sha of [...keep]) if (!contents.has(sha)) keep.delete(sha);
+  return keep;
+}
+
+/**
+ * Process validated evidence and persist results (never touches baselines).
+ *
+ * The raw inventory is saved BEFORE static analysis: if analysing a hostile
+ * script hangs or exhausts memory, reports/scans/<scan-id>.json still records
+ * what was observed. latest-scan.json is only updated once the analysed result
+ * is complete.
+ */
 export async function persistScan(resolved: ResolvedConfig, evidence: ScanEvidence): Promise<ScanRunResult> {
+  assertScanSitesConfigured(resolved, evidence.sites.map((s) => s.name), `Evidence for scan ${evidence.scanId}`);
   const processed = processEvidence(evidence, resolved.sites, {
     maxRequestsStoredPerPage: 1000,
     maxResourceBytes: resolved.config.limits.maxResourceBytes,
   });
-  analyzeResources(
-    processed.result.sites.flatMap((s) => s.resources),
-    processed.contents,
-    resolved.config,
-  );
-  const scanPath = await saveScanResult(resolved.paths, processed.result);
+  await saveScanResult(resolved.paths, processed.result, { updateLatest: false });
   await saveScreenshots(resolved.paths, processed.screenshots);
-  if (resolved.config.retention.storeScriptContent) {
+  const libraryDb = resolved.config.libraries.detect ? await loadLibraryDb(resolved.paths.cache, { maxAgeDays: resolved.config.libraries.maxDbAgeDays }) : undefined;
+  analyzeAll(resolved, processed.result, processed.contents, libraryDb);
+  const scanPath = await saveScanResult(resolved.paths, processed.result);
+  const retain = await contentToRetain(resolved, processed.result, processed.contents);
+  if (retain.size > 0) {
     const store = new ContentStore(resolved.paths.content);
-    for (const [sha, data] of processed.contents) await store.put(sha, data);
+    for (const sha of retain) await store.put(sha, processed.contents.get(sha) as Buffer);
   }
   await enforceRetention(resolved);
   return { ...processed, scanPath };

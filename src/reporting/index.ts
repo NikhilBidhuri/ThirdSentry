@@ -45,7 +45,8 @@ export async function writeReports(
       }
       case 'sarif': {
         const path = join(dir, 'report.sarif');
-        const sarif = await buildSarif(report, { configPath: resolved.configPath, baseDir: resolved.baseDir });
+        // Artifact paths are relative to the repository root (GITHUB_WORKSPACE or the Git work tree).
+        const sarif = await buildSarif(report, { configPath: resolved.configPath });
         await writeFileAtomic(path, stableStringify(sarif));
         out.sarif = path;
         break;

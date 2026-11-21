@@ -30,6 +30,7 @@ Rule matches on unchanged, approved scripts never produce findings. They are vis
 | `TS-WEBSOCKET` | WebSocket connection | low | high | 6 |
 | `TS-REMOTE-ENDPOINT` | Sends requests to absolute URLs | info | medium | 2 |
 | `TS-NETWORK-API-HOOK` | Overrides network or form APIs | medium | high | 12 |
+| `TS-SOURCE-REFLECTION` | Reads its own source code | info | medium | 2 |
 | `TS-OBFUSCATION` | Obfuscated or heavily encoded code | medium | medium | 12 |
 | `TS-EXFIL-COMBINATION` | Sensitive data access combined with data transmission | high | medium | 22 |
 
@@ -174,7 +175,10 @@ The same script both reads sensitive input (form fields, keystrokes, clipboard) 
 
 - Code that is built and executed at runtime (`eval`, `new Function`, code fetched from a server) is only visible as the call that executes it, which is why the dynamic-code rules exist.
 - Property names computed at runtime (`window[atob('ZG9jdW1lbnQ=')]`) cannot be resolved statically. The obfuscation rule flags code that relies heavily on such tricks.
-- Simple aliases are resolved (`var d = document`, `(function (w, d) { ... })(window, document)`); arbitrary data flow is not tracked.
+- Simple aliases are resolved (`var d = document`, `var e = eval; e(p)`, `(function (w, d) { ... })(window, document)`); arbitrary data flow is not tracked.
+- Evasions that are recognised: optional calls and members (`eval?.(p)`, `document?.cookie`), tagged templates (``Function`x` ``, ``setTimeout`x` ``), constructor gadgets (`(function(){}).constructor(p)()`, `[]["filter"]["constructor"](p)()`), constant-folded computed names (`window['ev' + 'al']`, `document['coo' + 'kie']`, names held in a `const`), and hooking `fetch`, `XMLHttpRequest` or `sendBeacon` through assignment or `Object.defineProperty`.
+- Scripts are parsed the way the browser runs them: classic scripts with Annex B HTML-like comments (`<!--` and a line-leading `-->` start a comment), modules as modules, and resources of unknown type (code fetched by `fetch`/XHR) as classic script first. Parsing with the wrong goal would let a payload hide in what one side thinks is a comment.
+- Comment- and whitespace-only changes are normally "formatting only". If the script reads its own source (`TS-SOURCE-REFLECTION`) or runs strings as code (`TS-EVAL`, `TS-NEW-FUNCTION`, `TS-STRING-TIMER`), such a change is reported with the `formatting-with-reflection` signal and medium confidence instead.
 - Scripts larger than `analysis.maxScriptBytes` (default 3 MiB) are not analysed; their hashes are still compared.
 
 ## Configuring rules
@@ -237,6 +241,11 @@ HIGH confidence high  Third-party script changed on a sensitive page  TS-3f1c0a9
 | `moved-same-domain` | 3 | Approved code is now served from a different URL on the same domain |
 | `sri-mismatch` | 45 | The Subresource Integrity attribute does not match the served content (behavioural) |
 | `content-unavailable` | 10 | The script content could not be captured, so changes cannot be ruled out |
+| `analysis-unavailable` | 10 | The script could not be analysed (parse error or too large), so behaviour changes cannot be ruled out |
+| `analysis-regression` | 20 | The previous version could be analysed but this one cannot (obfuscation or unusual syntax is a common reason) (behavioural) |
+| `formatting-with-reflection` | 12 | Only formatting changed, but the script reads its own source or runs strings as code, where formatting is observable |
+| `page-failed` | 20 | The page could not be scanned, so none of its scripts were verified |
+| `coverage-degraded` | 15 | The page was only partly scanned (budget limit, timeout or dropped data), so changes may be hidden |
 | `resource-removed` | 4 | An approved resource no longer loads |
 | `new-outbound-domain-third-party` | 25 | The page now sends requests to a third-party domain never approved for this site |
 | `new-outbound-domain-first-party` | 8 | The page now sends requests to a new first-party domain |
@@ -249,7 +258,13 @@ HIGH confidence high  Third-party script changed on a sensitive page  TS-3f1c0a9
 | `denylisted-domain` | 80 | The domain is on the configured denylist (behavioural) |
 | `suspicious-domain` | 30 | The domain matches a configured reputation warning (domains.suspicious) (behavioural) |
 | `ip-address-destination` | 15 | The destination is a raw IP address rather than a domain name (behavioural) |
+| `pinned-hash-mismatch` | 55 | A pinned script does not match any allowed hash, whatever the baseline says (behavioural) |
+| `policy-accepted-update` | 0 | The content changed, which a script policy explicitly accepts |
 | `script-references-new-destination` | 25 | The changed script itself references the new outbound destination (behavioural) |
+| `vulnerable-library-low` | 20 | A loaded library has a known low-severity vulnerability |
+| `vulnerable-library-medium` | 40 | A loaded library has a known medium-severity vulnerability |
+| `vulnerable-library-high` | 60 | A loaded library has a known high-severity vulnerability |
+| `vulnerable-library-critical` | 80 | A loaded library has a known critical vulnerability |
 
 Rule matches add signals named `new-rule:<rule id>` (or `rule:<rule id>` at half weight when the previous version was not analysed). Rules with a weight of 10 or more count as behavioural and move a finding into the `suspicious` category.
 
@@ -262,6 +277,17 @@ risk:
     new-outbound-host: 0           # never care about new hosts under approved domains
     hash-changed-third-party: 30
 ```
+
+## PCI related finding kinds
+
+| Kind | Meaning | Typical severity |
+| --- | --- | --- |
+| `security-header-changed` | A security-relevant document header (CSP, HSTS, X-Frame-Options, ...) differs from the approved baseline. Weakened headers add their weight (and `sensitive-page`); strengthened-only changes are info. | CSP weakened on a payment page: high; header removed: medium to high; strengthened: info |
+| `payment-form-changed` | The form structure of a sensitive page changed: new payment form or card input, re-targeted action, removed/renamed card field. Order and formatting changes are ignored. | action origin changed or new card input: high/critical; removed/renamed card field: medium |
+| `security-baseline-missing` | Notice that headers/forms were never approved for some pages (older baselines). One per site. | low |
+| `script-unjustified` | Script on a payment page without inventory justification or with overdue review (only with `pci.requireJustification`). | info/low |
+
+Signals: `payment-form-added` 50, `form-action-origin-changed` 50, `form-action-external` 25, `payment-field-added` 45, `payment-field-removed`/`-renamed` 30, `payment-frame-added` 30, `form-action-path-changed` 20, `form-method-changed` 12, `form-added` 10, `form-removed` 8, `form-field-changed` 8, `security-baseline-missing` 15, `script-unjustified-third-party` 15, `script-unjustified-first-party` 8, `script-review-overdue` 8, plus one `header-weakened:<header>` signal per weakened header (CSP: up to 60, `'unsafe-inline'` 40, new script host 25, directive removed 25-40; HSTS removed 35; X-Frame-Options removed 30). Override any of them under `risk.weights`. See [pci.md](pci.md).
 
 ## Outbound domain policy
 
@@ -297,7 +323,35 @@ suppressions:
 - A suppression with `rule` removes only that rule's signal from matching findings and re-scores them, so it cannot hide unrelated problems in the same change.
 - Any other suppression (`id`, `kind`, `site`, `resource`, `domain`) marks the whole finding as **suppressed**. Suppressed findings stay in reports (marked as such) but do not trigger alerts or fail builds.
 - Expired suppressions stop applying and produce a warning.
+- A suppression may name a script policy (`policy: <name>`) to match every finding that policy affected. For vendors whose scripts rotate, prefer a [script policy](policies.md), which never hides new suspicious behaviour.
+
+## Coverage findings
+
+A page that fails to scan, is scanned only partly (time budget, script/request limits, navigation timeout) or is in the baseline but was not scanned at all (page limit, unreachable site) produces a `page-failed` or `coverage-degraded` finding. Without it, every script change on that page would be invisible. On `sensitivePages` the `sensitive-page` signal is added, so these rate higher. The ID is derived from site, page, kind and the sorted list of reasons (issue codes), so the same ongoing problem alerts once; a different reason, or escalation from partial to failed, is a new finding.
+
+## vulnerable-library
+
+A `vulnerable-library` finding says that a recognised JavaScript library, in a version with known advisories, is loaded by the page (see [libraries.md](libraries.md) for how libraries are recognised and where the data comes from). Unlike the change kinds above it is not a difference from the baseline: a vulnerable library is reported whether or not it was approved, for sites with and without a baseline. Approving a baseline does not silence it; suppress it instead.
+
+- **One finding per resource and library version**, listing every advisory (CVE ID, severity, summary) that affects that version.
+- **Severity** is the highest advisory severity (`low`, `medium`, `high`, `critical`, from the database). On a page marked as `sensitivePages` it is raised by one level (`sensitive-page` signal, "severity raised from medium to high"). The `vulnerable-library-*` weights above give the score; `risk.weights` can override them. `libraries.minSeverity` hides advisories below a level.
+- **Confidence** comes from the detection method: `high` for banners and content hashes, `medium` for version assignments in code and for versions read from a URL, `low` for weak URL hints. A finding based on a URL says that the file may differ from its name.
+- **Stable ID**: derived from site, resource identity, library, version and the sorted set of advisory IDs. It alerts once; it changes (and alerts again) only when the library version, the resource, or the set of matching advisories changes, for example when a database update adds an advisory. The same code on another page keeps its ID.
+- **Next steps**: the lowest version that fixes all listed advisories (the highest `below` bound among them), links (NVD and the advisory's references) and how to suppress. Reachability of the vulnerable code is not assessed.
+- **Suppress** like any finding (`kind: vulnerable-library`, `resource`, `domain`, `id`, `site`; a reason is required, `expires` is recommended):
+
+```yaml
+suppressions:
+  - kind: vulnerable-library
+    resource: https://legacy.example.com/js/jquery-1.12.4.min.js
+    reason: Admin-only page behind VPN; migration tracked in SEC-204
+    expires: 2027-03-31
+```
+
+## Inline scripts
+
+Inline and blob scripts are matched per page and frame without relying on DOM position: an exact (or formatting-only) content match anywhere on the page means unchanged, and leftover new and removed scripts on the same page are paired by position and size and reported as one modified script. A body that was truncated at the capture limit can never match: it is reported as "content could not be verified".
 
 ## Repeated findings
 
-Finding IDs are fingerprints of the site, change kind, resource and current content hash. The same unchanged problem keeps the same ID across scans and is marked `recurring` after its first appearance (`new`). If the script changes again, the ID changes and the finding is `new` again. Alerts use this to avoid repeating themselves (see [alerts.md](alerts.md)). The state is kept in `.thirdsentry/state/findings.json`.
+Finding IDs are fingerprints of the site, change kind, resource, host (where the finding is about a specific host) and current content hash. The same unchanged problem keeps the same ID across scans and is marked `recurring` after its first appearance (`new`). If the script changes again, the ID changes and the finding is `new` again. Alerts use this to avoid repeating themselves (see [alerts.md](alerts.md)). The state is kept in `.thirdsentry/state/findings.json`.

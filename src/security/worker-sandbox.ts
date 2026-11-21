@@ -1,4 +1,4 @@
-import { fork } from 'node:child_process';
+import { execFile, fork, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -7,9 +7,10 @@ import { fileURLToPath } from 'node:url';
 import type { CollectRequest } from '../browser/collector.js';
 import { ScanEvidenceSchema, type ScanEvidence } from '../types/evidence.js';
 import { EvidenceValidationError, ThirdSentryError } from '../utils/errors.js';
-import { readJsonFile } from '../utils/fs.js';
+import { assembleEvidence } from './evidence-assembly.js';
 import { getLogger } from '../utils/logger.js';
 import { formatZodIssues } from '../config/loader.js';
+import { isSecretName, journeySecretNames } from '../config/journeys.js';
 
 /**
  * Runs the browser worker in a separate Node.js process.
@@ -21,8 +22,11 @@ import { formatZodIssues } from '../config/loader.js';
  *  - HOME/TEMP point at a disposable directory that is deleted afterwards.
  *  - The child is given only the collection request (sites, limits, network
  *    policy). It is not told where baselines, reports or state live.
- *  - Its output is size-limited and schema-validated before use.
- *  - It is killed if it exceeds the scan time budget.
+ *  - Its output (one part file per page) is size-limited and schema-validated
+ *    part by part before use. If the worker crashes or times out, completed
+ *    pages/sites are kept and the rest is marked failed.
+ *  - On timeout it gets SIGTERM and a grace period, then the whole process
+ *    tree (including browsers) is killed.
  *
  * Process mode does NOT provide filesystem isolation: the worker runs as the
  * same OS user. For stronger isolation run the browser worker in the
@@ -52,12 +56,29 @@ export function defaultPlaywrightBrowsersPath(env: NodeJS.ProcessEnv = process.e
   return join(env.XDG_CACHE_HOME ?? join(homedir(), '.cache'), 'ms-playwright');
 }
 
-/** Build the minimal environment passed to the browser worker. */
-export function buildWorkerEnv(sandboxDir: string, parentEnv: NodeJS.ProcessEnv = process.env, logLevel = 'info'): NodeJS.ProcessEnv {
+/**
+ * Build the minimal environment passed to the browser worker.
+ *
+ * `journeySecrets` names the THIRDSENTRY_SECRET_* variables referenced by
+ * journey `fill` steps. Only those (and only names of that exact form) are
+ * copied from the parent environment: this is the one deliberate exception to
+ * "the browser worker has no secrets" (docs/security.md#journey-credentials).
+ * Alert credentials and every other variable stay out.
+ */
+export function buildWorkerEnv(
+  sandboxDir: string,
+  parentEnv: NodeJS.ProcessEnv = process.env,
+  logLevel = 'info',
+  journeySecrets: readonly string[] = [],
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const key of ENV_ALLOWLIST) {
     const value = parentEnv[key];
     if (value !== undefined) env[key] = value;
+  }
+  for (const key of journeySecrets) {
+    const value = parentEnv[key];
+    if (isSecretName(key) && value !== undefined) env[key] = value;
   }
   env.PLAYWRIGHT_BROWSERS_PATH = defaultPlaywrightBrowsersPath(parentEnv);
   const home = join(sandboxDir, 'home');
@@ -97,6 +118,41 @@ export interface SandboxOptions {
   readonly maxEvidenceBytes: number;
   readonly timeoutMs: number;
   readonly logLevel?: string;
+  /** Time between SIGTERM and killing the process tree (default 5000). */
+  readonly killGraceMs?: number;
+}
+
+/** Kill a process and all of its descendants (browsers started by the worker). */
+export function killProcessTree(pid: number): Promise<void> {
+  if (process.platform === 'win32') {
+    return new Promise((resolvePromise) => {
+      execFile('taskkill', ['/T', '/F', '/PID', String(pid)], { windowsHide: true }, () => resolvePromise());
+    });
+  }
+  try {
+    process.kill(-pid, 'SIGKILL'); // the worker is a process-group leader (detached)
+  } catch {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  }
+  return Promise.resolve();
+}
+
+async function stopChild(child: ChildProcess, graceMs: number): Promise<void> {
+  const pid = child.pid;
+  if (pid === undefined) return;
+  if (process.platform !== 'win32') {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      /* already gone */
+    }
+    await new Promise((r) => setTimeout(r, graceMs));
+  }
+  await killProcessTree(pid);
 }
 
 export async function runIsolatedCollection(request: CollectRequest, options: SandboxOptions): Promise<ScanEvidence> {
@@ -107,23 +163,27 @@ export async function runIsolatedCollection(request: CollectRequest, options: Sa
     await mkdir(join(sandboxDir, 'home'), { recursive: true });
     await mkdir(join(sandboxDir, 'tmp'), { recursive: true });
     const requestPath = join(sandboxDir, 'request.json');
-    const outputPath = join(sandboxDir, 'evidence.json');
+    const outputDir = join(sandboxDir, 'evidence');
+    await mkdir(outputDir, { recursive: true });
     await writeFile(requestPath, JSON.stringify(request));
 
-    const env = buildWorkerEnv(sandboxDir, process.env, options.logLevel);
+    const env = buildWorkerEnv(sandboxDir, process.env, options.logLevel, journeySecretNames(request.sites));
     log.debug({ entry, sandboxDir }, 'starting isolated browser worker');
-    const child = fork(entry, [requestPath, outputPath], {
+    const child = fork(entry, [requestPath, outputDir], {
       cwd: sandboxDir,
       env,
       execArgv: ['--max-old-space-size=2048'],
       stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
       serialization: 'json',
+      detached: process.platform !== 'win32',
     });
 
+    let timedOut = false;
     const exitCode = await new Promise<number | null>((resolvePromise, reject) => {
       const timer = setTimeout(() => {
-        log.error({ timeoutMs: options.timeoutMs }, 'browser worker exceeded its time budget; killing it');
-        child.kill('SIGKILL');
+        timedOut = true;
+        log.error({ timeoutMs: options.timeoutMs }, 'browser worker exceeded its time budget; stopping it');
+        void stopChild(child, options.killGraceMs ?? 5_000);
       }, options.timeoutMs);
       child.once('error', (error) => {
         clearTimeout(timer);
@@ -134,20 +194,39 @@ export async function runIsolatedCollection(request: CollectRequest, options: Sa
         resolvePromise(code);
       });
     });
-    if (exitCode !== 0) {
-      throw new ThirdSentryError(`Browser worker exited with code ${String(exitCode)}`, {
+    // Whatever the worker left behind (orphaned browsers) goes down with it.
+    if (child.pid !== undefined) await killProcessTree(child.pid);
+
+    if (exitCode === 0 && !timedOut) {
+      return await assemble(outputDir, request, options);
+    }
+    const failure = timedOut
+      ? `worker exceeded its time budget (${String(options.timeoutMs)} ms) and was killed`
+      : `worker exited with code ${String(exitCode)}`;
+    try {
+      const partial = await assemble(outputDir, request, { ...options, failure });
+      log.error({ failure }, 'browser worker did not finish; using the evidence it completed');
+      return partial;
+    } catch (error) {
+      throw new ThirdSentryError(`Browser worker ${failure}`, {
         hint: 'Run with --verbose for worker logs. If Chromium cannot start its sandbox, see docs/troubleshooting.md.',
+        cause: error,
       });
     }
-    let raw: unknown;
-    try {
-      raw = await readJsonFile(outputPath, options.maxEvidenceBytes);
-    } catch (error) {
-      throw new EvidenceValidationError(`Could not read browser worker evidence: ${(error as Error).message}`, error);
-    }
-    return validateEvidence(raw);
   } finally {
     await rm(sandboxDir, { recursive: true, force: true, maxRetries: 3 }).catch(() => undefined);
+  }
+}
+
+async function assemble(dir: string, request: CollectRequest, options: SandboxOptions & { failure?: string }): Promise<ScanEvidence> {
+  try {
+    return await assembleEvidence(dir, request, {
+      maxBytes: options.maxEvidenceBytes,
+      ...(options.failure ? { failure: options.failure } : {}),
+    });
+  } catch (error) {
+    if (error instanceof EvidenceValidationError) throw error;
+    throw new EvidenceValidationError(`Could not read browser worker evidence: ${(error as Error).message}`, error);
   }
 }
 

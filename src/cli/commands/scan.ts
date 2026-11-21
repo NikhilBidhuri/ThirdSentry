@@ -3,11 +3,12 @@ import { loadConfig, selectSites } from '../../config/loader.js';
 import { runScan } from '../../monitoring/scan-manager.js';
 import { shortHash } from '../../analysis/hashing.js';
 import type { ScanResult } from '../../types/index.js';
-import { ExitCode } from '../../utils/exit-codes.js';
-import { analyzeScan, exceedsThreshold, saveReportJson } from '../../monitoring/analysis-runner.js';
-import { parseFormats, writeReports } from '../../reporting/index.js';
+import { analysisExitCode, analyzeScan, missingBaselineNotice, publishReports } from '../../monitoring/analysis-runner.js';
+import { parseFormats } from '../../reporting/index.js';
 import { sendAlerts, type AlertRunResult } from '../../alerts/alert-manager.js';
 import { getLogger } from '../../utils/logger.js';
+import { sendRunHeartbeat } from '../../health/heartbeat.js';
+import { recordAlertHealth } from '../../health/run-health.js';
 import { printAlertResult } from './alert.js';
 import { globalOptions, logLevelFor } from '../context.js';
 import { parseFailOn } from '../fail-on.js';
@@ -21,6 +22,9 @@ export interface ScanCommandOptions {
   format?: string;
   alerts?: boolean;
   skipPreflight?: boolean;
+  allowMissingBaseline?: boolean;
+  failOnAlertError?: boolean;
+  heartbeat?: boolean;
 }
 
 /** Indicators shown in the default resource list (others appear with --verbose). */
@@ -77,6 +81,9 @@ export function registerScan(program: Command): void {
     .option('--fail-on <severity>', 'exit with code 1 if a finding is at least this severe (info|low|medium|high|critical|none)')
     .option('--no-alerts', 'do not send alerts even if channels are enabled')
     .option('--skip-preflight', 'skip DNS pre-flight checks (connections are still validated by the egress proxy)')
+    .option('--allow-missing-baseline', 'exit 0 instead of 3 when a scanned site has no baseline yet')
+    .option('--fail-on-alert-error', 'exit with code 4 if an alert could not be delivered')
+    .option('--no-heartbeat', 'do not send the health.heartbeat ping')
     .action(async (opts: ScanCommandOptions, command: Command) => {
       const g = globalOptions(command);
       const resolved = await loadConfig({ ...(g.config ? { configPath: g.config } : {}) });
@@ -85,28 +92,43 @@ export function registerScan(program: Command): void {
       const sites = selectSites(resolved, opts.site);
       const run = await runScan(resolved, { sites, logLevel: logLevelFor(g), ...(opts.skipPreflight ? { skipPreflight: true } : {}) });
       const { report } = await analyzeScan(resolved, run.result, { scanPath: run.scanPath, updateState: true });
-      // report.json in the storage directory is always written: diff/alert/report read it.
-      await saveReportJson(resolved, report);
-      const written = await writeReports(resolved, report, run.result, formats, opts.output);
+      // Reports go to reports/scans/<scan-id>/ and are copied atomically to the
+      // "latest" locations; report.json in the storage directory is always
+      // written (alert and the GitHub Action read it).
+      const published = await publishReports(resolved, report, run.result, formats, { ...(opts.output ? { outputDir: opts.output } : {}), alwaysJson: true });
+      const { scanReportDir, perScan, ...written } = published;
       let alertResult: AlertRunResult | undefined;
+      let alertFailed = false;
       if (opts.alerts !== false) {
         try {
-          alertResult = await sendAlerts(resolved, report, written.html ? { reportLocation: written.html } : {});
+          alertResult = await sendAlerts(resolved, report, perScan.html ? { reportLocation: perScan.html } : {});
+          alertFailed = alertResult.results.some((r) => !r.ok);
+          await recordAlertHealth(resolved, alertResult);
         } catch (error) {
           // Alerting must never destroy or invalidate scan results.
+          alertFailed = true;
           getLogger('alerts').error({ err: error instanceof Error ? error.message : String(error) }, 'alerting failed; scan results and reports were saved');
         }
       }
-      if (g.json) printJson({ scan: run.result, report, reports: written, alerts: alertResult });
+      // Dead-man's switch (this process has network access and credentials because alerts are enabled).
+      const heartbeat = opts.alerts !== false && opts.heartbeat !== false ? await sendRunHeartbeat(resolved.config.health.heartbeat, report, { alertFailed }) : undefined;
+      if (g.json) printJson({ scan: run.result, report, reports: written, scanReportDir, alerts: alertResult, ...(heartbeat ? { heartbeat } : {}), ...(alertFailed ? { alertFailed } : {}) });
       else {
         printScanSummary(run.result, g.verbose === true);
         printReport(report, g.verbose === true);
         print();
         print(color.gray(`Scan saved to ${run.scanPath}`));
         for (const [format, path] of Object.entries(written)) print(color.gray(`${format.toUpperCase()} report: ${path}`));
+        print(color.gray(`Reports for this scan: ${scanReportDir}`));
         if (alertResult) printAlertResult(alertResult);
       }
-      if (exceedsThreshold(report, failOn)) process.exitCode = ExitCode.FindingsThresholdExceeded;
-      else if (run.result.status !== 'complete') process.exitCode = ExitCode.ScanIncomplete;
+      const notice = missingBaselineNotice(report, opts.allowMissingBaseline === true);
+      if (notice) process.stderr.write(`${color.yellow(notice)}\n`);
+      process.exitCode = analysisExitCode(report, {
+        failOn,
+        allowMissingBaseline: opts.allowMissingBaseline === true,
+        failOnAlertError: opts.failOnAlertError === true,
+        alertFailed,
+      });
     });
 }

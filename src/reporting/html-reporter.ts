@@ -52,7 +52,7 @@ details{margin-top:8px}summary{cursor:pointer;color:var(--muted)}ul{margin:6px 0
 `;
 
 function badge(severity: Severity): string {
-  return `<span class="badge sev-${severity}">${SEVERITY_LABEL[severity]}</span>`;
+  return `<span class="badge sev-${escapeHtml(severity)}">${SEVERITY_LABEL[severity] ?? escapeHtml(severity)}</span>`;
 }
 
 function renderFinding(f: Finding): string {
@@ -60,17 +60,28 @@ function renderFinding(f: Finding): string {
     f.previousHash !== undefined || f.currentHash !== undefined
       ? `<p class="mono muted">previous ${e(f.previousHash ?? 'none')}<br>current&nbsp; ${e(f.currentHash ?? 'none')}</p>`
       : '';
-  const signals = f.signals.map((s) => `<li><span class="mono">${s.weight >= 0 ? '+' : ''}${s.weight}</span> ${e(s.description)}</li>`).join('');
-  const evidence = f.evidence.map((x) => `<tr><th>${e(x.label)}</th><td class="mono">${e(x.value)}</td></tr>`).join('');
+  // Tolerate finding kinds this version does not know (missing optional details).
+  const signals = (f.signals ?? []).map((s) => `<li><span class="mono">${s.weight >= 0 ? '+' : ''}${s.weight}</span> ${e(s.description)}</li>`).join('');
+  const evidence = (f.evidence ?? []).map((x) => `<tr><th>${e(x.label)}</th><td class="mono">${e(x.value)}</td></tr>`).join('');
   return `<article class="card finding${f.suppressed ? ' suppressed' : ''}" id="${e(f.id)}">
-<header>${badge(f.severity)}<h3>${e(f.title)}</h3><span class="muted">confidence ${e(f.confidence)} · ${e(CATEGORY_TEXT[f.category] ?? f.category)} · <span class="mono">${e(f.id)}</span>${f.status ? ` · ${e(f.status)}` : ''}</span></header>
+<header>${badge(f.severity)}<h3>${e(f.title || f.kind)}</h3><span class="muted">confidence ${e(f.confidence)} · ${e(CATEGORY_TEXT[f.category] ?? f.category)} · <span class="mono">${e(f.id)}</span>${f.status ? ` · ${e(f.status)}` : ''}</span></header>
 ${f.suppressed ? `<p class="muted">Suppressed: ${e(f.suppressed.reason)}${f.suppressed.expires ? ` (until ${e(f.suppressed.expires)})` : ''}</p>` : ''}
 ${f.resourceUrl ? `<p class="mono">${e(f.resourceUrl)}</p>` : ''}
 <p>${e(f.reason)}</p>${hashes}
-<p class="next"><b>What to do:</b> ${e(f.recommendedAction.replace('<finding-id>', f.id))}</p>
+<p class="next"><b>What to do:</b> ${e((f.recommendedAction ?? 'Review the finding.').replace('<finding-id>', f.id))}</p>
 <details><summary>Why this rating (score ${f.score})</summary><ul>${signals}</ul></details>
 <details><summary>Evidence</summary><table>${evidence}</table></details>
 </article>`;
+}
+
+function renderPolicies(report: AnalysisReport): string {
+  const p = report.policies;
+  if (!p) return '';
+  const rows = [...p.active, ...p.unused, ...p.expired]
+    .map((x) => `<tr><td class="mono">${e(x.name)}</td><td>${e(x.mode)}</td><td>${e(x.scope)}</td><td>${e(x.status)}</td><td>${x.matchedResources}</td><td>${x.acceptedUpdates}</td><td>${x.findings}</td><td>${e(x.owner ?? '')}</td><td>${e(x.expires ?? '')}</td><td>${e(x.reason)}</td></tr>`)
+    .join('');
+  const matches = p.matches.map((m) => `<tr><td class="mono">${e(m.resource)}</td><td>${e(m.policy)} (${e(m.mode)})</td><td class="mono">${e(m.identity)}</td></tr>`).join('');
+  return `<h2>Script policies</h2><div class="card"><table><thead><tr><th>Policy</th><th>Mode</th><th>Scope</th><th>Status</th><th>Scripts</th><th>Accepted updates</th><th>Findings</th><th>Owner</th><th>Expires</th><th>Reason</th></tr></thead><tbody>${rows}</tbody></table>${matches ? `<h3>Policy matches</h3><table><thead><tr><th>Script</th><th>Policy</th><th>Tracked as</th></tr></thead><tbody>${matches}</tbody></table>` : ''}</div>`
 }
 
 function renderResources(site: SiteResult): string {
@@ -85,6 +96,22 @@ function renderResources(site: SiteResult): string {
   return `<table><thead><tr><th>Type</th><th>Party</th><th>Resource</th><th>SHA-256</th><th>Pages</th><th>Behaviour indicators</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+function renderLibraries(report: AnalysisReport): string {
+  const libs = report.libraries;
+  if (!libs) return '';
+  const d = libs.db;
+  const dbLine = `Vulnerability database: ${d.source === 'cache' ? `cached download${d.fetchedAt ? `, fetched ${d.fetchedAt}` : ''}${d.ageDays !== undefined ? ` (${d.ageDays} days old)` : ''}` : 'bundled seed (small; run "thirdsentry vulndb update")'} · ${d.advisories} advisories`;
+  const warnings = d.warnings.map((w) => `<p class="warn">${e(w)}</p>`).join('');
+  if (libs.inventory.length === 0) return `<h2>Libraries</h2><div class="card"><p class="muted">No known JavaScript libraries were recognised.</p><p class="muted">${e(dbLine)}</p>${warnings}</div>`;
+  const rows = libs.inventory
+    .map(
+      (l) =>
+        `<tr><td>${e(l.site)}</td><td>${e(l.name)}</td><td class="mono">${e(l.version)}</td><td>${e(l.method)} (${e(l.confidence)})</td><td>${l.advisories.length ? `<span class="bad">${e(l.advisories.join(', '))}</span>` : '<span class="ok">none known</span>'}</td><td class="mono">${e(l.resources.slice(0, 3).join(', '))}</td></tr>`,
+    )
+    .join('');
+  return `<h2>Libraries (${libs.inventory.length})</h2><div class="card"><table><thead><tr><th>Site</th><th>Library</th><th>Version</th><th>Detected by</th><th>Known vulnerabilities</th><th>Resources</th></tr></thead><tbody>${rows}</tbody></table><p class="muted">${e(dbLine)}. Versions come from banners, code and URLs and can be wrong or missing for minified bundles.</p>${warnings}</div>`;
+}
+
 function renderDestinations(site: SiteResult): string {
   if (site.destinations.length === 0) return '<p class="muted">No outbound requests recorded.</p>';
   const rows = site.destinations
@@ -94,6 +121,22 @@ function renderDestinations(site: SiteResult): string {
     )
     .join('');
   return `<table><thead><tr><th>Host</th><th>Party</th><th>Methods</th><th>Types</th><th>Requests</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderPci(report: AnalysisReport): string {
+  const pci = report.pci;
+  if (!pci || pci.sites.length === 0) return '';
+  const rows = pci.sites
+    .map(
+      (s) =>
+        `<tr><td>${e(s.site)}</td><td class="mono">${e(s.inventoryFile ?? 'none')}</td><td>${s.sensitiveScripts}</td><td class="ok">${s.authorized}</td><td${s.missingJustification ? ' class="warn"' : ''}>${s.missingJustification}</td><td${s.reviewOverdue ? ' class="warn"' : ''}>${s.reviewOverdue}</td><td>${s.notApproved}</td><td>${s.unmatchedEntries}</td></tr>`,
+    )
+    .join('');
+  const gaps = pci.sites.flatMap((s) => s.gaps.map((g) => `<tr><td>${e(s.site)}</td><td>${e(g.status)}</td><td class="mono">${e(g.url)}</td><td>${e(g.issues.join('; '))}</td></tr>`)).join('');
+  return `<h2>Script inventory (PCI DSS 6.4.3)</h2>
+<div class="card"><table><thead><tr><th>Site</th><th>Inventory file</th><th>Scripts on payment pages</th><th>Authorized</th><th>No justification</th><th>Review overdue</th><th>Not approved</th><th>Unmatched entries</th></tr></thead><tbody>${rows}</tbody></table>
+${gaps ? `<details open><summary>Gaps</summary><table><thead><tr><th>Site</th><th>Status</th><th>Script</th><th>Details</th></tr></thead><tbody>${gaps}</tbody></table></details>` : ''}
+<p class="muted">Supports, but does not by itself demonstrate, compliance with PCI DSS 6.4.3. See docs/pci.md.</p></div>`;
 }
 
 export function renderHtmlReport(report: AnalysisReport, scan?: ScanResult): string {
@@ -142,9 +185,13 @@ export function renderHtmlReport(report: AnalysisReport, scan?: ScanResult): str
 <h2>Sites</h2>
 <div class="card"><table><thead><tr><th>Site</th><th>URL</th><th>Scan</th><th>Baseline</th><th>Unchanged</th><th>New</th><th>Modified</th><th>Removed</th><th>New domains</th></tr></thead><tbody>${siteRows}</tbody></table></div>
 
+${renderPolicies(report)}
+${renderPci(report)}
 <h2>Findings (${active.length})</h2>
 ${active.length === 0 ? '<p class="muted">No active findings.</p>' : active.map(renderFinding).join('\n')}
 ${suppressed.length ? `<h2>Suppressed findings (${suppressed.length})</h2>${suppressed.map(renderFinding).join('\n')}` : ''}
+
+${renderLibraries(report)}
 
 ${failures.length ? `<h2>Scan problems</h2><div class="card"><table><thead><tr><th>Where</th><th>Level</th><th>Code</th><th>Message</th></tr></thead><tbody>${failures.map((i) => `<tr><td>${e(i.where)}</td><td>${e(i.level)}</td><td class="mono">${e(i.code)}</td><td>${e(i.message)}</td></tr>`).join('')}</tbody></table></div>` : ''}
 

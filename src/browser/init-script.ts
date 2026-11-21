@@ -45,8 +45,21 @@ export function buildInitScript(options: InitScriptOptions): string {
     const batch = queue; queue = [];
     try { bindingRef(batch); } catch (e) {}
   };
+  // Drop counters are reported to the collector (outside the page) so that
+  // lost evidence marks the page partial instead of disappearing silently.
+  const stats = { reportsDropped: 0, untrackedBlobs: 0 };
+  let statsScheduled = false;
+  const scheduleStats = () => {
+    if (statsScheduled) return;
+    statsScheduled = true;
+    nativeSetTimeout(() => {
+      statsScheduled = false;
+      queue.push({ t: 'stats', reportsDropped: stats.reportsDropped, untrackedBlobs: stats.untrackedBlobs });
+      if (!flushScheduled) { flushScheduled = true; nativeSetTimeout(flush, 0); }
+    }, 200);
+  };
   const send = (msg) => {
-    if (sent >= OPTS.maxReports) return;
+    if (sent >= OPTS.maxReports) { stats.reportsDropped++; scheduleStats(); return; }
     sent++;
     msg.frameUrl = String(location.href);
     msg.timestamp = new Date().toISOString();
@@ -76,20 +89,41 @@ export function buildInitScript(options: InitScriptOptions): string {
     return parts.join('>');
   };
 
+  // Registry of blob URL -> Blob for blobs that are not obviously JavaScript
+  // (e.g. image previews), so their content can still be captured if they are
+  // later used as a script or worker source. JavaScript-typed blobs are
+  // captured immediately and do not need the registry. When the registry is
+  // full, revoked entries are evicted first; otherwise the blob is counted as
+  // untracked (reported to the collector).
+  const MAX_TRACKED_BLOBS = 2000;
   const blobs = new Map();
+  const revokedBlobs = new Set();
   const capturedBlobs = new Set();
   const nativeCreateObjectURL = URL.createObjectURL;
+  const nativeRevokeObjectURL = URL.revokeObjectURL;
+  const trackBlob = (url, blob) => {
+    if (blobs.size >= MAX_TRACKED_BLOBS) {
+      for (const old of revokedBlobs) { revokedBlobs.delete(old); blobs.delete(old); if (blobs.size < MAX_TRACKED_BLOBS) break; }
+    }
+    if (blobs.size >= MAX_TRACKED_BLOBS) { stats.untrackedBlobs++; scheduleStats(); return; }
+    blobs.set(url, blob);
+  };
   const toBase64 = (buf) => {
     const bytes = new Uint8Array(buf);
     let bin = '';
     for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
     return btoa(bin);
   };
-  const captureBlob = (url) => {
+  const captureBlob = (url, known) => {
     if (capturedBlobs.has(url)) return;
-    const blob = blobs.get(url);
-    if (!blob) return;
+    const blob = known || blobs.get(url);
     capturedBlobs.add(url);
+    if (!blob) {
+      // Used as a script/worker source but not held: JS evidence may be lost.
+      send({ t: 'blob', blobUrl: url, missed: true });
+      return;
+    }
+    blobs.delete(url);
     const truncated = blob.size > OPTS.maxBlobBytes;
     blob.slice(0, OPTS.maxBlobBytes).arrayBuffer().then((buf) => {
       send({ t: 'blob', blobUrl: url, mimeType: String(blob.type || ''), size: blob.size, truncated, textBase64: toBase64(buf) });
@@ -103,11 +137,15 @@ export function buildInitScript(options: InitScriptOptions): string {
       const url = nativeCreateObjectURL.apply(this, arguments);
       try {
         if (obj instanceof Blob) {
-          if (blobs.size < 500) blobs.set(url, obj);
-          if (looksLikeScriptType(obj.type)) captureBlob(url);
+          if (looksLikeScriptType(obj.type)) captureBlob(url, obj);
+          else trackBlob(url, obj);
         }
       } catch (e) {}
       return url;
+    };
+    URL.revokeObjectURL = function (url) {
+      try { if (blobs.has(String(url))) revokedBlobs.add(String(url)); } catch (e) {}
+      return nativeRevokeObjectURL.apply(this, arguments);
     };
   } catch (e) {}
 
@@ -247,8 +285,12 @@ export function buildInitScript(options: InitScriptOptions): string {
 
 /**
  * Function evaluated in each frame at the end of a page scan to snapshot the
- * script elements present in the DOM. Executed via `frame.evaluate`, so it is
- * independent of the init script above (which the page may have tampered with).
+ * script elements present in the DOM. It is not injected into the page, but
+ * `frame.evaluate` runs in the page's MAIN world, so a hostile page can still
+ * tamper with the DOM APIs it uses (querySelectorAll, getAttribute, ...) or with
+ * the elements themselves. Its output is page-reported data like the init
+ * script's: it may add context but must never remove a network-derived signal
+ * (see docs/limitations.md, "In-page instrumentation").
  */
 export const SNAPSHOT_SCRIPT = `(maxInlineChars) => {
   const out = [];
@@ -286,5 +328,5 @@ export const SNAPSHOT_SCRIPT = `(maxInlineChars) => {
     }
     out.push(item);
   }
-  return out;
+  return { items: out, total: scripts.length };
 }`;

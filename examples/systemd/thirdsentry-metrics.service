@@ -1,0 +1,18 @@
+# /etc/systemd/system/thirdsentry-metrics.service
+# Renders Prometheus metrics for node_exporter's textfile collector (docs/monitoring.md).
+# Read-only with respect to ThirdSentry's data; writes only the .prom file.
+[Unit]
+Description=ThirdSentry metrics (node_exporter textfile)
+After=docker.service
+
+[Service]
+Type=oneshot
+User=thirdsentry
+Group=docker
+WorkingDirectory=/opt/thirdsentry
+# Docker pipeline: the tools container with the textfile directory mounted (it must be writable by uid 1001).
+ExecStart=/usr/bin/docker compose run --rm -v /var/lib/node_exporter/textfile:/textfile tools metrics --textfile /textfile/thirdsentry.prom
+# Without Docker, instead:
+# ExecStart=/usr/bin/npx thirdsentry metrics --textfile /var/lib/node_exporter/textfile/thirdsentry.prom
+NoNewPrivileges=true
+PrivateTmp=true

@@ -1,8 +1,8 @@
 import { resolve } from 'node:path';
 import type { Command } from 'commander';
 import { loadConfig } from '../../config/loader.js';
-import { analyzeScan, exceedsThreshold } from '../../monitoring/analysis-runner.js';
-import { parseFormats, writeReports } from '../../reporting/index.js';
+import { analyzeScan, exceedsThreshold, publishReports } from '../../monitoring/analysis-runner.js';
+import { parseFormats } from '../../reporting/index.js';
 import { loadLatestScan, loadScanResult } from '../../storage/filesystem-store.js';
 import { ExitCode } from '../../utils/exit-codes.js';
 import { globalOptions } from '../context.js';
@@ -32,8 +32,9 @@ export function registerReport(program: Command): void {
       const scanPath = opts.scan ? resolve(opts.scan) : resolved.paths.latestScan;
       const scan = opts.scan ? await loadScanResult(scanPath) : await loadLatestScan(resolved.paths);
       const { report } = await analyzeScan(resolved, scan, { scanPath });
-      const written = await writeReports(resolved, report, scan, formats, opts.output);
-      if (g.json) printJson({ written, highestSeverity: report.highestSeverity, findings: report.findings.length });
+      // Per-scan copies in reports/scans/<scan-id>/, atomically updated latest copies in the output directory.
+      const { scanReportDir, perScan: _perScan, ...written } = await publishReports(resolved, report, scan, formats, opts.output ? { outputDir: opts.output } : {});
+      if (g.json) printJson({ written, scanReportDir, highestSeverity: report.highestSeverity, findings: report.findings.length });
       else {
         print(report.headline);
         for (const [format, path] of Object.entries(written)) print(color.green(`${format.toUpperCase()} report: ${path}`));

@@ -2,6 +2,8 @@ import type { ResolvedSite } from '../config/loader.js';
 import { discoverPageResources, iframeOrigins, type ResourceCandidate } from '../discovery/index.js';
 import { classifyParty, hostInfo, partyContextFor, type PartyContext } from '../discovery/resource-classifier.js';
 import { resourceKey } from '../discovery/resource-identity.js';
+import { fingerprintForms } from '../pci/form-fingerprint.js';
+import { extractSecurityHeaders } from '../pci/security-headers.js';
 import { redactText, redactUrl } from '../security/redaction.js';
 import type { PageEvidence, ProxyEvent, ScanEvidence, SiteEvidence } from '../types/evidence.js';
 import type {
@@ -16,6 +18,7 @@ import type {
 import { compact } from '../utils/object.js';
 import { sha256Hex, sriHash, verifySri } from './hashing.js';
 import { NORMALIZER_VERSION, normalizeJavaScript } from './normalizer.js';
+import { goalForResourceType } from './parser.js';
 import { coverageLimitations } from './coverage.js';
 
 /**
@@ -80,7 +83,7 @@ function buildResource(c: ResourceCandidate, party: PartyContext, contents: Map<
   else if (!isJs) normalization = { status: 'not-javascript' };
   else if (c.contentStatus === 'truncated') normalization = { status: 'unavailable', error: 'content truncated' };
   else {
-    const n = normalizeJavaScript(body.toString('utf8'), { maxChars });
+    const n = normalizeJavaScript(body.toString('utf8'), { maxChars, goal: goalForResourceType(c.type) });
     normalization = compact({ status: n.status, error: n.error });
     normalizedSha = n.normalizedSha256 ?? null;
   }
@@ -120,6 +123,7 @@ function buildResource(c: ResourceCandidate, party: PartyContext, contents: Map<
     hashes: {
       sha256: sha,
       sri: body ? sriHash(body) : null,
+      sri384: body ? sriHash(body, 'sha384') : null,
       normalizedSha256: normalizedSha,
       normalizerVersion: normalizedSha ? NORMALIZER_VERSION : null,
     },
@@ -154,11 +158,17 @@ function freeze(r: MutableResource): ScriptResource {
   });
 }
 
-function isBlockedFailure(failure: string | undefined): boolean {
-  return failure !== undefined && /TUNNEL_CONNECTION_FAILED|PROXY|403|blocked/i.test(failure);
+/** host:port endpoints the egress proxy refused (from its connection events). */
+function endpointKey(host: string, port: number | string): string {
+  return `${host.toLowerCase().replace(/^\[|\]$/g, '')}:${port}`;
 }
 
-function outboundRequests(page: PageEvidence, party: PartyContext, blockedHosts: ReadonlySet<string>, max: number): { requests: OutboundRequest[]; truncated: number } {
+function requestEndpoint(url: URL): string {
+  const port = url.port || (url.protocol === 'https:' || url.protocol === 'wss:' ? '443' : '80');
+  return endpointKey(url.hostname, port);
+}
+
+function outboundRequests(page: PageEvidence, party: PartyContext, blockedEndpoints: ReadonlySet<string>, max: number): { requests: OutboundRequest[]; truncated: number } {
   const out: OutboundRequest[] = [];
   let truncated = 0;
   for (const req of page.requests) {
@@ -190,7 +200,12 @@ function outboundRequests(page: PageEvidence, party: PartyContext, blockedHosts:
         status: req.status,
         failure: req.failure ? redactText(req.failure, 300) : undefined,
         fromServiceWorker: req.fromServiceWorker,
-        blocked: blockedHosts.has(info.hostname) && (req.failure === undefined || isBlockedFailure(req.failure)) && req.status === undefined,
+        // The egress proxy's record of refused host:port endpoints is the authority
+        // (browser error strings differ per engine: an HTTPS refusal is a tunnel error,
+        // a plain http:// refusal is the proxy's 403, which fetch() may surface as a
+        // generic CORS failure). A request counts as blocked when its endpoint was
+        // refused and it received no response other than the proxy's 403.
+        blocked: blockedEndpoints.has(requestEndpoint(url)) && (req.status === undefined || req.status === 403),
       }),
     );
   }
@@ -233,7 +248,7 @@ function processSite(
   const party = partyContextFor(evidence.url, site?.firstPartyDomains ?? []);
   const ignoreQueryParams = site?.ignoreQueryParams ?? [];
   const resources = new Map<string, MutableResource>();
-  const blockedHosts = new Set(evidence.proxyEvents.filter((e: ProxyEvent) => !e.allowed).map((e) => e.host.toLowerCase()));
+  const blockedEndpoints = new Set(evidence.proxyEvents.filter((e: ProxyEvent) => !e.allowed).map((e) => endpointKey(e.host, e.port)));
   const pages: PageResult[] = [];
 
   evidence.pages.forEach((page, index) => {
@@ -251,7 +266,7 @@ function processSite(
       else resources.set(key, buildResource(c, party, contents, options.maxResourceBytes * 2));
       pageKeys.add(key);
     }
-    const { requests, truncated } = outboundRequests(page, party, blockedHosts, options.maxRequestsStoredPerPage);
+    const { requests, truncated } = outboundRequests(page, party, blockedEndpoints, options.maxRequestsStoredPerPage);
     let screenshot: string | undefined;
     if (page.screenshotBase64) {
       screenshot = `screenshots/${scanId}/${evidence.name}/${index}.png`;
@@ -276,6 +291,9 @@ function processSite(
         pageErrors: page.pageErrors.slice(0, 20),
         cspHeaders: page.cspHeaders,
         cspReportOnlyHeaders: page.cspReportOnlyHeaders,
+        securityHeaders: page.status !== 'failed' && page.documentStatus !== undefined ? extractSecurityHeaders(page.documentHeaders, page.cspHeaders, page.cspReportOnlyHeaders) : undefined,
+        formFingerprint: fingerprintForms(page.formSnapshot),
+        formSnapshotFailed: page.formSnapshot?.status === 'failed' ? true : undefined,
         screenshot,
       }),
     );

@@ -51,6 +51,23 @@ describe('individual rules', () => {
     ['TS-REMOTE-ENDPOINT', 'xhr.open("POST", "https://c.example/collect")', 'dialog.open("modal")'],
     ['TS-NETWORK-API-HOOK', 'XMLHttpRequest.prototype.send = function(){}', 'MyThing.prototype.send = function(){}'],
     ['TS-NETWORK-API-HOOK', 'window.fetch = wrapped', 'var fetchLater = wrapped'],
+    // Evasion variants: optional chaining, tagged templates, constructor gadgets, folded names, aliases, hooks.
+    ['TS-EVAL', 'eval?.(p)', 'evaluate?.(p)'],
+    ['TS-EVAL', 'var e = eval; e(p)', 'var e = other; e(p)'],
+    ['TS-EVAL', "window['ev' + 'al'](p)", "window['ev' + 'ent'](p)"],
+    ['TS-EVAL', '(0, eval)(p)', '(0, other)(p)'],
+    ['TS-NEW-FUNCTION', 'Function?.(p)()', 'Fn?.(p)()'],
+    ['TS-NEW-FUNCTION', 'Function`alert(1)`', 'tag`alert(1)`'],
+    ['TS-NEW-FUNCTION', '(function(){}).constructor(p)()', 'obj.constructor(p)'],
+    ['TS-NEW-FUNCTION', '[]["filter"]["constructor"](p)()', '[]["filter"]["call"](p)'],
+    ['TS-STRING-TIMER', 'setTimeout`x`', 'tag`x`'],
+    ['TS-BEACON', 'navigator.sendBeacon?.(u, d)', 'other.sendBeacon?.(u, d)'],
+    ['TS-REMOTE-ENDPOINT', 'fetch?.("https://x.example/c")', 'fetch?.("/c")'],
+    ['TS-SENSITIVE-FIELD-ACCESS', "document.querySelector?.('#cvv')", "document.querySelector?.('#nav')"],
+    ['TS-COOKIE-ACCESS', "document['coo' + 'kie']", "document['coo' + 'lie']"],
+    ['TS-COOKIE-ACCESS', "const k = 'coo' + 'kie'; document[k]", "const k = 'coo' + 'lie'; document[k]"],
+    ['TS-NETWORK-API-HOOK', "Object.defineProperty(window, 'fetch', { value: f })", "Object.defineProperty(window, 'foo', { value: f })"],
+    ['TS-NETWORK-API-HOOK', "var P = XMLHttpRequest.prototype; P['op' + 'en'] = f", "var P = Other.prototype; P['op' + 'en'] = f"],
   ])('%s matches "%s" but not "%s"', (rule, positive, negative) => {
     expect(has(positive, rule)).toBe(true);
     expect(has(negative, rule)).toBe(false);

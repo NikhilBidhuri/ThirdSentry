@@ -16,13 +16,32 @@ state/
 evidence/
 `;
 
+/** YAML double-quoted scalar (JSON strings are valid YAML double-quoted scalars). */
+function yamlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+/**
+ * Fill in the configuration template. Function replacers are used so that
+ * replacement patterns such as `$'` or `$&` in user input are inserted
+ * literally, and values are YAML-quoted so they cannot inject YAML.
+ */
+export function renderConfig(name: string, url: string): string {
+  return (
+    CONFIG_TEMPLATE.replace('__SITE_NAME__', () => yamlString(name))
+      .replace('__SITE_URL__', () => yamlString(url))
+      // New projects use the current retention option (the template may still show the deprecated one).
+      .replace(/^([ \t]*)storeScriptContent: false[^\n]*$/m, (_m, indent: string) => `${indent}scriptContent: findings  # none | findings (approved versions + versions behind findings) | all`)
+  );
+}
+
 export function registerInit(program: Command): void {
   program
     .command('init')
     .description('Create a thirdsentry.yml configuration and the .thirdsentry/ directory')
     .option('--url <url>', 'website URL to pre-fill in the configuration')
     .option('--name <name>', 'site name to pre-fill', 'my-site')
-    .option('--force', 'overwrite an existing thirdsentry.yml')
+    .option('--force', 'overwrite an existing thirdsentry.yml and .thirdsentry/.gitignore')
     .action(async (opts: { url?: string; name: string; force?: boolean }, command: Command) => {
       const g = globalOptions(command);
       const cwd = process.cwd();
@@ -31,20 +50,24 @@ export function registerInit(program: Command): void {
         throw new ConfigError(`${configPath} already exists`, 'Use --force to overwrite it.');
       }
       if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(opts.name)) throw new ConfigError(`Invalid site name "${opts.name}"`);
+      let siteUrl = 'https://example.com/';
       if (opts.url) {
         try {
           const u = new URL(opts.url);
           if (!['http:', 'https:'].includes(u.protocol)) throw new Error('scheme');
+          siteUrl = u.href;
         } catch {
           throw new ConfigError(`Invalid --url "${opts.url}"`, 'Use a full URL such as https://example.com');
         }
       }
-      const text = CONFIG_TEMPLATE.replace('__SITE_NAME__', opts.name).replace('__SITE_URL__', opts.url ?? 'https://example.com');
-      await writeFile(configPath, text, 'utf8');
+      await writeFile(configPath, renderConfig(opts.name, siteUrl), 'utf8');
 
       const storage = join(cwd, '.thirdsentry');
       await mkdir(join(storage, 'baselines'), { recursive: true });
-      await writeFile(join(storage, '.gitignore'), STORAGE_GITIGNORE, 'utf8');
+      // Never overwrite a customised .gitignore without --force.
+      const storageIgnore = join(storage, '.gitignore');
+      const keptIgnore = (await pathExists(storageIgnore)) && !opts.force;
+      if (!keptIgnore) await writeFile(storageIgnore, STORAGE_GITIGNORE, 'utf8');
 
       // Make sure .env files are not committed by accident.
       const rootIgnore = join(cwd, '.gitignore');
@@ -54,11 +77,12 @@ export function registerInit(program: Command): void {
       }
 
       if (g.json) {
-        printJson({ config: configPath, storage });
+        printJson({ config: configPath, storage, ...(keptIgnore ? { keptGitignore: storageIgnore } : {}) });
         return;
       }
       print(color.green(`Created ${configPath}`));
       print(color.green(`Created ${storage}/ (reports, cache and state are git-ignored)`));
+      if (keptIgnore) print(color.yellow(`Kept the existing ${storageIgnore} (use --force to replace it).`));
       print();
       print('Next steps:');
       print(`  1. Edit ${color.bold('thirdsentry.yml')} and list the sites and pages to monitor.`);

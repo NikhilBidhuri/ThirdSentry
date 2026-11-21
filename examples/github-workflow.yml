@@ -39,6 +39,9 @@ jobs:
       - uses: <owner>/thirdsentry@<ref>
         with:
           fail-on: high
+          # persist-state: 'true' (default) keeps alert state in the Actions cache so
+          # scheduled runs do not repeat alerts. Use a distinct sarif-category and
+          # state-key per config or site subset.
         env:
           # Alert credentials come from repository secrets; never commit them.
           THIRDSENTRY_SLACK_WEBHOOK: ${{ secrets.THIRDSENTRY_SLACK_WEBHOOK }}

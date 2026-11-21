@@ -4,7 +4,7 @@ ThirdSentry tries to be explicit about what it cannot see. Every scan report rep
 
 ## Coverage of a single scan
 
-- **Only configured pages, once, without interaction.** ThirdSentry does not click, scroll, log in, accept consent banners or submit forms. Scripts loaded only after interaction, on unlisted pages, or for authenticated users are not observed.
+- **Only configured pages and journeys, without general interaction.** ThirdSentry does not click, scroll, log in, accept consent banners or submit forms on its own. Scripts loaded only after interaction, on unlisted pages, or for authenticated users are not observed, except where you script a [journey](configuration.md#journeys). Journeys are declarative and brittle by nature (selectors change; a changed login flow fails the journey until you update it), cover only the paths you script, and by default refuse to submit payment forms.
 - **Variants.** Vendors can serve different code by geography, user agent, time, consent state, A/B bucket or bot detection. A scan observes one variant. Malicious code that deliberately hides from automated or headless browsers may not be served at all.
 - **Timing.** Pages are observed for a bounded time (`timeout`, `networkIdleTimeout`, `settleMs`). Code that loads later, or sends data later, is not seen.
 
@@ -45,7 +45,13 @@ With `strategy: allow`, service workers run normally. Their script and traffic a
 
 - Bodies larger than `limits.maxResourceBytes` are tracked by identity only (`too-large`).
 - Some responses do not expose a body to Playwright (for example certain cached or aborted responses). These are tracked with content status `unavailable`.
-- Captured content is used for hashing and analysis and is discarded afterwards unless `retention.storeScriptContent` is enabled.
+- Captured content is used for hashing and analysis and is discarded afterwards except as `retention.scriptContent` allows (by default only approved versions and versions involved in findings are kept; see [privacy.md](privacy.md)).
+
+## In-page instrumentation and evidence limits
+
+- The end-of-scan DOM snapshot runs through `frame.evaluate`, which executes in the page's main JavaScript world. It is not tamper-proof: a hostile page can alter the DOM APIs it uses. Snapshot and mutation-observer data (inline script text, `integrity`, "inserted by script") is therefore treated as page-reported context. It can add signals, never remove network-derived ones: any report of runtime injection marks a script dynamic, and an `integrity` value is only used for an SRI check when the snapshot corroborates it. A CDP isolated world would be stronger but is Chromium-only and has not been implemented.
+- Evidence per page and per scan is bounded (`limits.maxEvidenceBytesPerPage`, `limits.maxEvidenceBytesPerScan`, `limits.maxReportCallsPerPage`). Once exhausted, bodies are recorded with content status `budget-exceeded` (identity and network facts are kept) and the page is marked partial with an issue. Reports beyond the per-page worker/blob entry limits, blobs the instrumentation could not capture, and frames the snapshot could not inspect before the time budget are counted and also mark the page partial.
+- Evidence is written incrementally by the browser worker (one file per page). If the worker crashes or times out, completed pages and sites are kept; the page in progress and the not-yet-scanned pages are marked failed with an issue, and the scan carries a `worker-incomplete` issue. On timeout the worker gets SIGTERM and a grace period, then the whole process tree (including browsers) is killed.
 
 ## Network monitoring
 

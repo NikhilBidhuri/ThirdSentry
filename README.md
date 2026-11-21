@@ -15,9 +15,13 @@ ThirdSentry visits your pages in a real browser, records every script that runs,
 - **Hashes everything**: SHA-256 of the exact bytes, an SRI value, and a second hash of conservatively normalised code, so formatting-only changes can be told apart from code changes.
 - **Approved baselines** stored as Git-friendly JSON. Scans never approve anything automatically.
 - **Change detection**: new, removed and modified scripts, new third-party domains, redirect changes, iframe origin changes and new outbound destinations.
+- **Script policies** (pin, path-versions, domain-only) for vendors whose scripts rotate: explicit, expiring and reviewable, and they never hide new suspicious behaviour ([docs/policies.md](docs/policies.md)).
 - **Static analysis** with Babel ASTs for behaviours worth reviewing (eval, script injection, cookie/storage/form access, beacons, WebSockets, obfuscation, and sensitive-data-plus-transmission combinations), with explainable risk scoring.
-- **Reports** in JSON, SARIF (GitHub Code Scanning) and HTML; **alerts** via Slack, webhooks, GitHub Issues and email.
+- **Logged-in journeys**: scripted multi-step flows (login, cart, checkout) with stable `journey:<name>/<capture>` page keys, secrets only via `${THIRDSENTRY_SECRET_<NAME>}`, and a guard against submitting payment forms.
+- **Known libraries and CVEs**: recognises libraries and versions (jQuery, Lodash, Bootstrap, ...) offline from banners, code and URLs, explains version changes, and flags known vulnerabilities from the retire.js database ([docs](docs/libraries.md)).
+- **Reports** in JSON, SARIF (GitHub Code Scanning) and HTML; **alerts** via Slack, Microsoft Teams, PagerDuty, webhooks, GitHub Issues and email.
 - **CSP linter** for Content-Security-Policy headers.
+- **PCI DSS v4.0 support**: a script authorization inventory (6.4.3, `thirdsentry inventory`), security-header change detection and payment-form integrity checks (11.6.1). See [docs/pci.md](docs/pci.md).
 - **Hardened by design**: the browser is treated as hostile. All browser traffic goes through an egress proxy that blocks private, loopback, link-local and cloud-metadata addresses per connection (defeating DNS rebinding), and the browser runs in a separate process (or container) without access to your secrets.
 
 ## Quick start
@@ -64,11 +68,15 @@ my-store https://www.example.com/ — complete (chromium 140.0.7339.16)
 | [Configuration](docs/configuration.md) | every `thirdsentry.yml` option |
 | [CLI reference](docs/cli.md) | commands, flags and exit codes |
 | [Baselines](docs/baselines.md) | approving and updating what is expected |
+| [Script policies](docs/policies.md) | pin / path-versions / domain-only for rotating vendor scripts |
 | [Detection rules](docs/rules.md) | static-analysis rules and risk scoring |
-| [Alerts](docs/alerts.md) | Slack, webhook, GitHub Issues, email |
+| [Libraries and CVEs](docs/libraries.md) | library detection and the vulnerability database |
+| [Alerts](docs/alerts.md) | Slack, Teams, PagerDuty, webhook, GitHub Issues, email |
 | [GitHub Actions](docs/github-actions.md) | scheduled scans in CI |
 | [Docker](docs/docker.md) and [cron](docs/cron.md) | self-hosted scheduled scans |
+| [Health and monitoring](docs/monitoring.md) | failed-scan alerts, heartbeat (dead-man's switch), Prometheus metrics, `status` |
 | [CSP analysis](docs/csp.md) | `thirdsentry csp-lint` |
+| [PCI DSS support](docs/pci.md) | script inventory (6.4.3), header and payment-form change detection (11.6.1) |
 | [Security model](docs/security.md) | threat model and isolation boundaries |
 | [Privacy and data retention](docs/privacy.md) | exactly what is collected and stored |
 | [Known limitations](docs/limitations.md) | what ThirdSentry cannot see |

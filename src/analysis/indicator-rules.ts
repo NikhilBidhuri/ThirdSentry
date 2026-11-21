@@ -1,6 +1,23 @@
 import type { NodePath } from '@babel/traverse';
 import type { Node } from '@babel/types';
-import { calleeName, elementKind, entropy, isStringish, lastSegment, memberChain, propertyName, resolvedMemberChain, staticString, stringPrefix, urlHost, type ScopedPath } from './ast-helpers.js';
+import {
+  callArguments,
+  calleeName,
+  calleeOf,
+  elementKind,
+  entropy,
+  foldString,
+  isStringish,
+  lastSegment,
+  memberChain,
+  propertyName,
+  resolveName,
+  resolvedMemberChain,
+  scopedPropertyName,
+  staticString,
+  stringPrefix,
+  urlHost,
+} from './ast-helpers.js';
 import type { AnalysisState, Rule } from './rule-types.js';
 
 /**
@@ -8,9 +25,13 @@ import type { AnalysisState, Rule } from './rule-types.js';
  *
  * Detection is AST-based (Babel), not regular expressions over source text,
  * so comments and string contents do not trigger code rules and simple
- * whitespace/formatting tricks do not hide them. Static analysis cannot see
- * through runtime-computed property names or code generated at runtime; the
- * dynamic-code and obfuscation rules exist to flag exactly those cases.
+ * whitespace/formatting tricks do not hide them. Call-like rules see plain
+ * calls, optional calls (`f?.()`), `new` and tagged templates (`` f`x` ``);
+ * names are resolved through constant-folded computed members
+ * (`window['ev' + 'al']`) and simple aliases (`var e = eval`). Static
+ * analysis still cannot see through property names computed at runtime or
+ * code generated at runtime; the dynamic-code and obfuscation rules exist to
+ * flag exactly those cases.
  */
 
 const SENSITIVE_FIELD = /password|passwd|pwd|card|cc-?num|ccnum|cc-number|cc-csc|cc-exp|cvv|cvc|csc|security.?code|expir|iban|ssn|social.?security|pin\b|otp/i;
@@ -19,50 +40,65 @@ const KEY_EVENTS = new Set(['keydown', 'keyup', 'keypress', 'input', 'beforeinpu
 const CLIPBOARD_EVENTS = new Set(['copy', 'cut', 'paste']);
 const FORM_EVENTS = new Set(['submit', 'change', 'blur', 'focusout']);
 const NETWORK_HOOK_TARGETS = new Set([
+  'XMLHttpRequest',
   'XMLHttpRequest.prototype.open',
   'XMLHttpRequest.prototype.send',
   'XMLHttpRequest.prototype.setRequestHeader',
   'fetch',
   'navigator.sendBeacon',
+  'Navigator.prototype.sendBeacon',
   'HTMLFormElement.prototype.submit',
+  'WebSocket',
   'WebSocket.prototype.send',
   'EventTarget.prototype.addEventListener',
 ]);
+/** Calls that define or overwrite a property: (target, name, …) or (target, { name: … }). */
+const PROPERTY_DEFINERS = new Set(['Object.defineProperty', 'Reflect.defineProperty', 'Reflect.set', 'Object.defineProperties', 'Object.assign']);
+/** Globals that are functions, so `<global>.constructor` is the Function constructor. */
+const GLOBAL_FUNCTIONS = new Set([
+  'Function', 'eval', 'alert', 'Object', 'Array', 'String', 'Number', 'Boolean', 'Symbol', 'Date', 'RegExp', 'Error', 'Promise', 'Map', 'Set',
+  'parseInt', 'parseFloat', 'escape', 'unescape', 'atob', 'btoa', 'fetch', 'setTimeout', 'setInterval', 'isNaN', 'isFinite',
+  'encodeURI', 'decodeURI', 'encodeURIComponent', 'decodeURIComponent', 'Function.prototype',
+]);
+/** Property names that are (almost always) built-in methods, so `x.<name>.constructor` is Function. */
+const METHOD_NAMES = new Set([
+  'filter', 'map', 'forEach', 'reduce', 'some', 'every', 'find', 'findIndex', 'indexOf', 'join', 'push', 'pop', 'slice', 'splice', 'concat',
+  'call', 'apply', 'bind', 'toString', 'valueOf', 'hasOwnProperty', 'fill', 'at', 'includes', 'keys', 'entries', 'values', 'sort', 'reverse',
+  'shift', 'unshift', 'flat', 'flatMap', 'trim', 'split', 'replace', 'charAt', 'charCodeAt', 'fromCharCode', 'sub', 'big', 'bold', 'italics',
+  'link', 'small', 'strike', 'sup', 'anchor', 'fontcolor', 'blink', 'constructor',
+]);
+const SOURCE_TEXT_PROPS = new Set(['text', 'textContent', 'innerHTML', 'innerText', 'outerHTML']);
+const GLOBAL_OBJECTS = new Set(['window', 'self', 'globalThis', 'top', 'parent', 'frames']);
 
-function firstArg(path: NodePath): Node | undefined {
-  const n = path.node;
-  if (n.type === 'CallExpression' || n.type === 'NewExpression' || n.type === 'OptionalCallExpression') {
-    const a = n.arguments[0];
-    return a && a.type !== 'SpreadElement' && a.type !== 'ArgumentPlaceholder' ? a : undefined;
+/** An invocation (call, optional call, `new`, tagged template) with its callee names and effective arguments. */
+interface Invocation {
+  readonly node: Node;
+  readonly args: Node[];
+  readonly tagged: boolean;
+  readonly isNew: boolean;
+  /** Callee chain as written (computed names folded), e.g. `el.querySelector`. */
+  readonly raw: string | undefined;
+  /** Callee resolved through aliases to a global, e.g. `eval` for `var e = eval; e(…)`; `.call`/`.apply` stripped. */
+  readonly resolved: string | undefined;
+  /** Resolved name, else the raw name. */
+  readonly name: string | undefined;
+}
+
+function invocation(path: NodePath): Invocation {
+  const node = path.node;
+  const callee = calleeOf(node);
+  let args = callArguments(node);
+  const raw = calleeName(node);
+  let resolved = callee ? resolveName(path, callee) : undefined;
+  // f.call(thisArg, a, b) / f.apply(thisArg, [a, b]) invoke f.
+  const via = /\.(call|apply)$/.exec(resolved ?? '');
+  if (resolved && via) {
+    resolved = resolved.slice(0, -via[0].length);
+    const rest = args.slice(1);
+    const list = rest[0];
+    args = via[1] === 'apply' ? (list?.type === 'ArrayExpression' ? list.elements.filter((e): e is NonNullable<typeof e> => e !== null && e.type !== 'SpreadElement') : []) : rest;
   }
-  return undefined;
-}
-
-function nthArg(path: NodePath, i: number): Node | undefined {
-  const n = path.node;
-  if (n.type === 'CallExpression' || n.type === 'NewExpression' || n.type === 'OptionalCallExpression') {
-    const a = n.arguments[i];
-    return a && a.type !== 'SpreadElement' && a.type !== 'ArgumentPlaceholder' ? a : undefined;
-  }
-  return undefined;
-}
-
-/** True when `name` is not declared in any enclosing scope (Babel counts built-in globals as bindings unless told otherwise). */
-function isGlobal(path: NodePath, name: string): boolean {
-  return !path.scope.hasBinding(name, { noGlobals: true });
-}
-
-/** Callee name with aliased globals resolved (`n.sendBeacon` → `navigator.sendBeacon`). */
-function resolvedCallee(path: NodePath): string | undefined {
-  const n = path.node;
-  if ((n.type === 'CallExpression' || n.type === 'NewExpression') && (n.callee.type === 'MemberExpression' || n.callee.type === 'OptionalMemberExpression')) {
-    return resolvedMemberChain(path as unknown as ScopedPath, n.callee);
-  }
-  return calleeName(n);
-}
-
-function resolvedMember(path: NodePath): string | undefined {
-  return resolvedMemberChain(path as unknown as ScopedPath, path.node);
+  return { node, args, tagged: node.type === 'TaggedTemplateExpression', isNew: node.type === 'NewExpression', raw, resolved, name: resolved ?? raw };
 }
 
 function recordHost(state: AnalysisState, node: Node | undefined): void {
@@ -73,6 +109,98 @@ function recordHost(state: AnalysisState, node: Node | undefined): void {
 function isAssignmentTarget(path: NodePath): boolean {
   const parent = path.parentPath;
   return parent?.node.type === 'AssignmentExpression' && parent.node.left === path.node;
+}
+
+function resolvedMember(path: NodePath): string | undefined {
+  return resolvedMemberChain(path, path.node);
+}
+
+/** True when the expression evaluates to a function (so its `.constructor` is a Function constructor). */
+function isFunctionValued(path: NodePath, node: Node, depth = 0): boolean {
+  if (depth > 4) return false;
+  switch (node.type) {
+    case 'FunctionExpression':
+    case 'ArrowFunctionExpression':
+    case 'ClassExpression':
+      return true;
+    case 'MemberExpression':
+    case 'OptionalMemberExpression': {
+      const prop = scopedPropertyName(path, node);
+      if (prop !== undefined && METHOD_NAMES.has(prop)) return true;
+      const name = resolveName(path, node);
+      return name !== undefined && GLOBAL_FUNCTIONS.has(name);
+    }
+    case 'Identifier': {
+      const binding = path.scope.getBinding(node.name);
+      if (!binding) return GLOBAL_FUNCTIONS.has(node.name);
+      const decl = binding.path.node;
+      if (decl.type === 'FunctionDeclaration' || decl.type === 'ClassDeclaration') return true;
+      if (decl.type === 'VariableDeclarator' && decl.init) return isFunctionValued(binding.path, decl.init, depth + 1);
+      return false;
+    }
+    default:
+      return false;
+  }
+}
+
+/** `<function>.constructor(…)` reaches the Function (or AsyncFunction/GeneratorFunction) constructor from any function value. */
+function isConstructorGadget(path: NodePath, node: Node): boolean {
+  const callee = calleeOf(node);
+  if (!callee || (callee.type !== 'MemberExpression' && callee.type !== 'OptionalMemberExpression')) return false;
+  if (scopedPropertyName(path, callee) !== 'constructor') return false;
+  return isFunctionValued(path, callee.object);
+}
+
+/** Dotted name of `<target>.<prop>` with global objects removed (`window` + `fetch` → `fetch`). */
+function joinTarget(target: string | undefined, prop: string | undefined): string | undefined {
+  if (target === undefined || prop === undefined) return undefined;
+  return GLOBAL_OBJECTS.has(target) ? prop : `${target}.${prop}`;
+}
+
+/** Global names defined by Object.defineProperty / defineProperties / assign / Reflect.set / Reflect.defineProperty calls. */
+function definedProperties(path: NodePath, inv: Invocation): string[] {
+  const [target, second] = inv.args;
+  if (!target) return [];
+  const targetName = resolveName(path, target) ?? memberChain(target);
+  if (inv.resolved === 'Object.defineProperties' || inv.resolved === 'Object.assign') {
+    if (second?.type !== 'ObjectExpression') return [];
+    const out: string[] = [];
+    for (const p of second.properties) {
+      if (p.type !== 'ObjectProperty' && p.type !== 'ObjectMethod') continue;
+      const key = !p.computed && p.key.type === 'Identifier' ? p.key.name : foldString(path, p.key);
+      const name = joinTarget(targetName, key);
+      if (name) out.push(name);
+    }
+    return out;
+  }
+  const name = joinTarget(targetName, foldString(path, second));
+  return name ? [name] : [];
+}
+
+/** TS-NEW-FUNCTION for `new Function`, `Function(…)`, `Function?.(…)`, `` Function`…` ``, aliases and `.constructor` gadgets. */
+function reportFunctionConstructor(path: NodePath, state: AnalysisState): void {
+  const inv = invocation(path);
+  if (inv.resolved === 'Function' || inv.resolved === 'Function.prototype.constructor') {
+    state.report('TS-NEW-FUNCTION', path.node, inv.raw === 'Function' ? undefined : `via ${inv.raw ?? 'indirect reference'}`);
+  } else if (isConstructorGadget(path, path.node)) {
+    state.report('TS-NEW-FUNCTION', path.node, 'constructor gadget');
+  }
+}
+
+/** True when `name` is not declared in any enclosing scope (Babel counts built-in globals as bindings unless told otherwise). */
+function isGlobal(path: NodePath, name: string): boolean {
+  return !path.scope.hasBinding(name, { noGlobals: true });
+}
+
+/** Function bound to an identifier or written inline (for `fn.toString()` reflection). */
+function isFunctionLiteralOrBinding(path: NodePath, node: Node): boolean {
+  if (node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression' || node.type === 'ClassExpression') return true;
+  if (node.type === 'MemberExpression' && memberChain(node) === 'arguments.callee') return true;
+  if (node.type !== 'Identifier') return false;
+  const decl = path.scope.getBinding(node.name)?.path.node;
+  if (!decl) return false;
+  if (decl.type === 'FunctionDeclaration' || decl.type === 'ClassDeclaration') return true;
+  return decl.type === 'VariableDeclarator' && (decl.init?.type === 'FunctionExpression' || decl.init?.type === 'ArrowFunctionExpression' || decl.init?.type === 'ClassExpression');
 }
 
 export const RULES: readonly Rule[] = [
@@ -87,9 +215,10 @@ export const RULES: readonly Rule[] = [
     investigation: 'Find what string is passed to eval and where it comes from (a constant, a decoded blob, a network response?). Code fetched or decoded at runtime deserves close review.',
     falsePositives: 'Old libraries and some tag managers use eval for JSON parsing or template compilation.',
     visitors: {
+      // Also optional calls (eval?.(x)), aliases (var e = eval), computed names (window['ev' + 'al']) and eval.call(…).
       CallExpression(path, state) {
-        const name = calleeName(path.node);
-        if ((name === 'eval' && isGlobal(path, 'eval')) || name === 'window.eval') state.report('TS-EVAL', path.node);
+        const inv = invocation(path);
+        if (!inv.tagged && inv.resolved === 'eval') state.report('TS-EVAL', path.node, inv.raw === 'eval' ? undefined : `via ${inv.raw ?? 'indirect reference'}`);
       },
     },
   },
@@ -105,19 +234,12 @@ export const RULES: readonly Rule[] = [
     falsePositives: 'Template engines and some polyfills (e.g. for globalThis detection: Function("return this")()) use it legitimately.',
     visitors: {
       NewExpression(path, state) {
-        if (calleeName(path.node) === 'Function' && isGlobal(path, 'Function')) state.report('TS-NEW-FUNCTION', path.node);
+        reportFunctionConstructor(path, state);
       },
+      // Also Function?.(x), Function`code`, aliases, and <any function>.constructor(…) gadgets such as
+      // (function(){}).constructor(x) or []['filter']['constructor'](x).
       CallExpression(path, state) {
-        const n = path.node;
-        const name = calleeName(n);
-        // x.constructor.constructor(...) reaches Function from any object (common sandbox-escape/obfuscation gadget).
-        const gadget =
-          n.type === 'CallExpression' &&
-          n.callee.type === 'MemberExpression' &&
-          propertyName(n.callee) === 'constructor' &&
-          n.callee.object.type === 'MemberExpression' &&
-          propertyName(n.callee.object) === 'constructor';
-        if ((name === 'Function' && isGlobal(path, 'Function')) || gadget) state.report('TS-NEW-FUNCTION', n);
+        reportFunctionConstructor(path, state);
       },
     },
   },
@@ -133,8 +255,10 @@ export const RULES: readonly Rule[] = [
     falsePositives: 'Very old code sometimes uses string timers out of habit.',
     visitors: {
       CallExpression(path, state) {
-        const name = lastSegment(calleeName(path.node));
-        if ((name === 'setTimeout' || name === 'setInterval') && isStringish(firstArg(path))) state.report('TS-STRING-TIMER', path.node);
+        const inv = invocation(path);
+        const name = lastSegment(inv.name);
+        // setTimeout`code` passes the template strings, which are converted to a string and evaluated.
+        if ((name === 'setTimeout' || name === 'setInterval') && (inv.tagged || isStringish(inv.args[0]))) state.report('TS-STRING-TIMER', path.node);
       },
     },
   },
@@ -150,16 +274,17 @@ export const RULES: readonly Rule[] = [
     falsePositives: 'Tag managers, analytics loaders and widget bootstrappers all inject scripts.',
     visitors: {
       CallExpression(path, state) {
-        const name = resolvedCallee(path);
+        const inv = invocation(path);
+        const name = inv.name;
         const last = lastSegment(name);
         if (last === 'createElement' || last === 'createElementNS') {
-          const arg = staticString(nthArg(path, last === 'createElementNS' ? 1 : 0));
+          const arg = foldString(path, inv.args[last === 'createElementNS' ? 1 : 0]);
           if (arg?.toLowerCase() === 'script') state.report('TS-SCRIPT-INJECTION', path.node);
         } else if (name === 'document.write' || name === 'document.writeln') {
-          const prefix = path.node.type === 'CallExpression' ? path.node.arguments.map((a) => (a.type === 'SpreadElement' || a.type === 'ArgumentPlaceholder' ? '' : (stringPrefix(a) ?? ''))).join('') : '';
+          const prefix = inv.args.map((a) => stringPrefix(a) ?? '').join('');
           if (/<script/i.test(prefix)) state.report('TS-SCRIPT-INJECTION', path.node, 'document.write');
         } else if (last === 'insertAdjacentHTML' || last === 'createContextualFragment') {
-          const html = stringPrefix(nthArg(path, last === 'insertAdjacentHTML' ? 1 : 0));
+          const html = stringPrefix(inv.args[last === 'insertAdjacentHTML' ? 1 : 0]);
           if (html && /<script/i.test(html)) state.report('TS-SCRIPT-INJECTION', path.node, last);
         }
       },
@@ -180,7 +305,7 @@ export const RULES: readonly Rule[] = [
         const n = path.node;
         if (n.type !== 'AssignmentExpression' || n.left.type !== 'MemberExpression') return;
         if (propertyName(n.left) !== 'src') return;
-        if (elementKind(path as unknown as ScopedPath, n.left.object) !== 'script') return;
+        if (elementKind(path, n.left.object) !== 'script') return;
         const host = urlHost(stringPrefix(n.right));
         if (host) {
           state.report('TS-REMOTE-SCRIPT-LOAD', n, host);
@@ -189,9 +314,10 @@ export const RULES: readonly Rule[] = [
       },
       CallExpression(path, state) {
         const n = path.node;
-        const name = calleeName(n);
-        if (name === 'importScripts' || (lastSegment(name) === 'setAttribute' && staticString(firstArg(path)) === 'src')) {
-          const target = name === 'importScripts' ? firstArg(path) : nthArg(path, 1);
+        const inv = invocation(path);
+        const name = inv.name;
+        if (name === 'importScripts' || (lastSegment(name) === 'setAttribute' && foldString(path, inv.args[0]) === 'src')) {
+          const target = name === 'importScripts' ? inv.args[0] : inv.args[1];
           const host = urlHost(stringPrefix(target));
           if (host) {
             state.report('TS-REMOTE-SCRIPT-LOAD', n, host);
@@ -246,7 +372,7 @@ export const RULES: readonly Rule[] = [
         const n = path.node;
         if (n.type !== 'Identifier' || (n.name !== 'localStorage' && n.name !== 'sessionStorage')) return;
         const parent = path.parentPath?.node;
-        if (parent?.type === 'MemberExpression' && parent.object === n && isGlobal(path, n.name)) state.report('TS-WEB-STORAGE', n, n.name);
+        if ((parent?.type === 'MemberExpression' || parent?.type === 'OptionalMemberExpression') && parent.object === n && isGlobal(path, n.name)) state.report('TS-WEB-STORAGE', n, n.name);
       },
     },
   },
@@ -262,9 +388,10 @@ export const RULES: readonly Rule[] = [
     falsePositives: 'Your own checkout code, form validation libraries and payment SDKs that are designed to wrap card inputs.',
     visitors: {
       CallExpression(path, state) {
-        const last = lastSegment(calleeName(path.node));
+        const inv = invocation(path);
+        const last = lastSegment(inv.raw ?? inv.name);
         if (!last || !/^(querySelector|querySelectorAll|getElementById|getElementsByName|getElementsByClassName|closest|matches)$/.test(last)) return;
-        const selector = stringPrefix(firstArg(path));
+        const selector = foldString(path, inv.args[0]) ?? stringPrefix(inv.args[0]);
         if (selector && SENSITIVE_FIELD.test(selector)) state.report('TS-SENSITIVE-FIELD-ACCESS', path.node, selector.slice(0, 80));
       },
       StringLiteral(path, state) {
@@ -287,14 +414,14 @@ export const RULES: readonly Rule[] = [
     falsePositives: 'Form analytics, validation, address autocomplete and chat widgets read form fields.',
     visitors: {
       CallExpression(path, state) {
-        const name = calleeName(path.node);
-        const last = lastSegment(name);
+        const inv = invocation(path);
+        const last = lastSegment(inv.raw ?? inv.name);
         if (last && /^(querySelector|querySelectorAll|getElementsByTagName)$/.test(last)) {
-          const selector = stringPrefix(firstArg(path));
+          const selector = foldString(path, inv.args[0]) ?? stringPrefix(inv.args[0]);
           if (selector && FORM_FIELD.test(selector) && !SENSITIVE_FIELD.test(selector)) state.report('TS-FORM-FIELD-ACCESS', path.node, selector.slice(0, 80));
         }
         if (last === 'addEventListener') {
-          const event = staticString(firstArg(path));
+          const event = foldString(path, inv.args[0]);
           if (event && FORM_EVENTS.has(event)) state.report('TS-FORM-FIELD-ACCESS', path.node, `${event} listener`);
         }
       },
@@ -315,14 +442,15 @@ export const RULES: readonly Rule[] = [
     falsePositives: 'Keyboard shortcuts, search-as-you-type, accessibility tools and input masking libraries.',
     visitors: {
       CallExpression(path, state) {
-        if (lastSegment(calleeName(path.node)) !== 'addEventListener') return;
-        const event = staticString(firstArg(path));
+        const inv = invocation(path);
+        if (lastSegment(inv.raw ?? inv.name) !== 'addEventListener') return;
+        const event = foldString(path, inv.args[0]);
         if (event && KEY_EVENTS.has(event)) state.report('TS-KEYSTROKE-CAPTURE', path.node, event);
       },
       AssignmentExpression(path, state) {
         const n = path.node;
         if (n.type !== 'AssignmentExpression' || n.left.type !== 'MemberExpression') return;
-        const prop = propertyName(n.left);
+        const prop = scopedPropertyName(path, n.left);
         if (prop === 'onkeydown' || prop === 'onkeyup' || prop === 'onkeypress' || prop === 'oninput') state.report('TS-KEYSTROKE-CAPTURE', n, prop);
       },
     },
@@ -339,16 +467,18 @@ export const RULES: readonly Rule[] = [
     falsePositives: '"Copy to clipboard" buttons and rich-text editors.',
     visitors: {
       MemberExpression(path, state) {
-        if (resolvedMember(path) === 'navigator.clipboard' && path.parentPath?.node.type === 'MemberExpression') state.report('TS-CLIPBOARD', path.node);
+        const parentType = path.parentPath?.node.type;
+        if (resolvedMember(path) === 'navigator.clipboard' && (parentType === 'MemberExpression' || parentType === 'OptionalMemberExpression')) state.report('TS-CLIPBOARD', path.node);
       },
       CallExpression(path, state) {
-        const name = resolvedCallee(path);
+        const inv = invocation(path);
+        const name = inv.name;
         const last = lastSegment(name);
         if (last === 'addEventListener') {
-          const event = staticString(firstArg(path));
+          const event = foldString(path, inv.args[0]);
           if (event && CLIPBOARD_EVENTS.has(event)) state.report('TS-CLIPBOARD', path.node, `${event} listener`);
         } else if (name === 'document.execCommand') {
-          const cmd = staticString(firstArg(path))?.toLowerCase();
+          const cmd = foldString(path, inv.args[0])?.toLowerCase();
           if (cmd === 'copy' || cmd === 'paste' || cmd === 'cut') state.report('TS-CLIPBOARD', path.node, `execCommand ${cmd}`);
         }
       },
@@ -366,9 +496,10 @@ export const RULES: readonly Rule[] = [
     falsePositives: 'Analytics and performance monitoring commonly use beacons.',
     visitors: {
       CallExpression(path, state) {
-        if (resolvedCallee(path) === 'navigator.sendBeacon') {
+        const inv = invocation(path);
+        if (inv.resolved === 'navigator.sendBeacon' || inv.resolved === 'Navigator.prototype.sendBeacon') {
           state.report('TS-BEACON', path.node);
-          recordHost(state, firstArg(path));
+          recordHost(state, inv.args[0]);
         }
       },
     },
@@ -385,9 +516,10 @@ export const RULES: readonly Rule[] = [
     falsePositives: 'Chat widgets, live updates and collaboration tools.',
     visitors: {
       NewExpression(path, state) {
-        if (calleeName(path.node) === 'WebSocket' && isGlobal(path, 'WebSocket')) {
+        const inv = invocation(path);
+        if (inv.resolved === 'WebSocket') {
           state.report('TS-WEBSOCKET', path.node);
-          recordHost(state, firstArg(path));
+          recordHost(state, inv.args[0]);
         }
       },
     },
@@ -404,31 +536,36 @@ export const RULES: readonly Rule[] = [
     falsePositives: 'Almost every third-party script talks to its own backend.',
     visitors: {
       CallExpression(path, state) {
-        const name = resolvedCallee(path);
-        const last = lastSegment(name);
+        const inv = invocation(path);
+        const last = lastSegment(inv.name);
         let target: Node | undefined;
-        if ((name === 'fetch' && isGlobal(path, 'fetch')) || name === 'window.fetch') target = firstArg(path);
-        else if (last === 'open' && path.node.type === 'CallExpression' && path.node.arguments.length >= 2) {
-          const method = staticString(firstArg(path));
-          if (method && /^(get|post|put|patch|delete|head)$/i.test(method)) target = nthArg(path, 1);
+        if (inv.resolved === 'fetch') target = inv.args[0];
+        else if (last === 'open' && inv.args.length >= 2) {
+          const method = foldString(path, inv.args[0]);
+          if (method && /^(get|post|put|patch|delete|head)$/i.test(method)) target = inv.args[1];
         }
         if (!target) return;
         const host = urlHost(stringPrefix(target));
         if (host) {
           state.report('TS-REMOTE-ENDPOINT', path.node, host);
           state.hosts.add(host);
+        } else {
+          // Destination computed at runtime: not reported on its own, but counts as a sink for TS-EXFIL-COMBINATION.
+          state.scratch.set('dynamicSink', (state.scratch.get('dynamicSink') ?? 0) + 1);
         }
       },
       AssignmentExpression(path, state) {
         const n = path.node;
         if (n.type !== 'AssignmentExpression' || n.left.type !== 'MemberExpression' || propertyName(n.left) !== 'src') return;
         // img.src = "https://..." (tracking pixels, and pixel-based exfiltration). Script elements are TS-REMOTE-SCRIPT-LOAD.
-        const kind = elementKind(path as unknown as ScopedPath, n.left.object);
+        const kind = elementKind(path, n.left.object);
         if (kind === 'script') return;
         const host = urlHost(stringPrefix(n.right));
         if (host) {
           state.report('TS-REMOTE-ENDPOINT', n, `${kind ?? 'element'} src ${host}`);
           state.hosts.add(host);
+        } else if (kind === 'img') {
+          state.scratch.set('dynamicSink', (state.scratch.get('dynamicSink') ?? 0) + 1);
         }
       },
       StringLiteral(path, state) {
@@ -442,7 +579,7 @@ export const RULES: readonly Rule[] = [
   {
     id: 'TS-NETWORK-API-HOOK',
     name: 'Overrides network or form APIs',
-    description: 'The script replaces fetch, XMLHttpRequest, sendBeacon, form submission or addEventListener.',
+    description: 'The script replaces fetch, XMLHttpRequest, WebSocket, sendBeacon, form submission or addEventListener (by assignment or Object.defineProperty).',
     severity: 'medium',
     confidence: 'high',
     role: 'hooking',
@@ -453,9 +590,18 @@ export const RULES: readonly Rule[] = [
       AssignmentExpression(path, state) {
         const n = path.node;
         if (n.type !== 'AssignmentExpression') return;
-        const target = n.left.type === 'MemberExpression' ? memberChain(n.left) : n.left.type === 'Identifier' ? n.left.name : undefined;
-        if (target && NETWORK_HOOK_TARGETS.has(target) && (n.left.type !== 'Identifier' || isGlobal(path, n.left.name))) {
-          state.report('TS-NETWORK-API-HOOK', n, target);
+        let target: string | undefined;
+        if (n.left.type === 'MemberExpression') target = resolveName(path, n.left) ?? memberChain(n.left);
+        else if (n.left.type === 'Identifier' && isGlobal(path, n.left.name)) target = n.left.name;
+        if (target && NETWORK_HOOK_TARGETS.has(target)) state.report('TS-NETWORK-API-HOOK', n, target);
+      },
+      // Object.defineProperty(window, 'fetch', …), Object.defineProperty(XMLHttpRequest.prototype, 'send', …),
+      // Object.assign(window, { fetch }), Reflect.set(navigator, 'sendBeacon', …)
+      CallExpression(path, state) {
+        const inv = invocation(path);
+        if (!inv.resolved || !PROPERTY_DEFINERS.has(inv.resolved)) return;
+        for (const name of definedProperties(path, inv)) {
+          if (NETWORK_HOOK_TARGETS.has(name)) state.report('TS-NETWORK-API-HOOK', path.node, `${inv.resolved} ${name}`);
         }
       },
     },
@@ -486,13 +632,14 @@ export const RULES: readonly Rule[] = [
         }
       },
       CallExpression(path, state) {
-        const name = calleeName(path.node);
-        if ((name === 'atob' && isGlobal(path, 'atob')) || name === 'window.atob') state.scratch.set('atob', (state.scratch.get('atob') ?? 0) + 1);
-        if (name === 'String.fromCharCode' && path.node.type === 'CallExpression' && path.node.arguments.length >= 8) {
+        const inv = invocation(path);
+        const name = inv.name;
+        if (inv.resolved === 'atob') state.scratch.set('atob', (state.scratch.get('atob') ?? 0) + 1);
+        if (name === 'String.fromCharCode' && inv.args.length >= 8) {
           state.scratch.set('charCodes', (state.scratch.get('charCodes') ?? 0) + 1);
         }
         if (lastSegment(name) === 'unescape' || lastSegment(name) === 'decodeURIComponent') {
-          if (staticString(firstArg(path))?.includes('%')) state.scratch.set('unescape', (state.scratch.get('unescape') ?? 0) + 1);
+          if (staticString(inv.args[0])?.includes('%')) state.scratch.set('unescape', (state.scratch.get('unescape') ?? 0) + 1);
         }
       },
       ArrayExpression(path, state) {
@@ -517,6 +664,43 @@ export const RULES: readonly Rule[] = [
     },
   },
   {
+    id: 'TS-SOURCE-REFLECTION',
+    name: 'Reads its own source code',
+    description: 'The script reads the source text of functions or of its own <script> element (Function.prototype.toString, fn.toString(), document.currentScript.textContent).',
+    severity: 'info',
+    confidence: 'medium',
+    role: 'dynamic-code',
+    explanation: 'Code that reads its own source can behave differently when only comments or formatting change, for example by decoding a payload hidden in a comment. A "formatting-only" change to such a script is therefore not guaranteed to be harmless.',
+    investigation: 'Check what is done with the source text. Feeding it to eval/Function or decoding data from it is a strong warning sign.',
+    falsePositives: 'Feature detection (checking whether a function is native via toString) and some dependency-injection and templating libraries read function source.',
+    visitors: {
+      MemberExpression(path, state) {
+        const chain = resolvedMember(path);
+        if (chain === 'Function.prototype.toString') {
+          state.report('TS-SOURCE-REFLECTION', path.node, chain);
+          return;
+        }
+        const n = path.node;
+        if ((n.type === 'MemberExpression' || n.type === 'OptionalMemberExpression') && SOURCE_TEXT_PROPS.has(scopedPropertyName(path, n) ?? '')) {
+          const object = resolveName(path, n.object) ?? memberChain(n.object);
+          if (object === 'document.currentScript') state.report('TS-SOURCE-REFLECTION', n, `document.currentScript.${scopedPropertyName(path, n) ?? ''}`);
+        }
+      },
+      CallExpression(path, state) {
+        const inv = invocation(path);
+        const callee = calleeOf(path.node);
+        // fn.toString() / (function () {}).toString() / arguments.callee.toString()
+        if (callee && (callee.type === 'MemberExpression' || callee.type === 'OptionalMemberExpression') && scopedPropertyName(path, callee) === 'toString') {
+          if (isFunctionLiteralOrBinding(path, callee.object)) state.report('TS-SOURCE-REFLECTION', path.node, 'function toString()');
+          return;
+        }
+        // String(fn)
+        const arg = inv.args[0];
+        if (inv.resolved === 'String' && arg && isFunctionLiteralOrBinding(path, arg)) state.report('TS-SOURCE-REFLECTION', path.node, 'String(function)');
+      },
+    },
+  },
+  {
     id: 'TS-EXFIL-COMBINATION',
     name: 'Sensitive data access combined with data transmission',
     description: 'The same script both reads sensitive input (form fields, keystrokes, clipboard) and sends data to remote endpoints.',
@@ -531,6 +715,8 @@ export const RULES: readonly Rule[] = [
       const sources = ['TS-SENSITIVE-FIELD-ACCESS', 'TS-KEYSTROKE-CAPTURE', 'TS-CLIPBOARD', 'TS-FORM-FIELD-ACCESS'].filter(has);
       const sinks = ['TS-BEACON', 'TS-WEBSOCKET', 'TS-REMOTE-ENDPOINT', 'TS-NETWORK-API-HOOK'].filter(has);
       const strongSource = sources.some((s) => s !== 'TS-FORM-FIELD-ACCESS');
+      // fetch/XHR/image requests to a URL computed at runtime also count as a sink when a strong source is present.
+      if (strongSource && (state.scratch.get('dynamicSink') ?? 0) > 0) sinks.push('request to a computed URL');
       if (sources.length > 0 && sinks.length > 0 && (strongSource || has('TS-NETWORK-API-HOOK'))) {
         state.report('TS-EXFIL-COMBINATION', ast, `sources: ${sources.join(', ')}; sinks: ${sinks.join(', ')}`);
       }

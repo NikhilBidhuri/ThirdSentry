@@ -1,4 +1,5 @@
 import type { Severity } from '../config/schema.js';
+import type { PolicyRef } from '../policies/types.js';
 import type { Party, ResourceType } from './index.js';
 
 export type { Severity } from '../config/schema.js';
@@ -29,7 +30,18 @@ export type ChangeKind =
   | 'new-outbound-host'
   | 'denylisted-domain'
   | 'iframe-origin-added'
-  | 'iframe-origin-removed';
+  | 'iframe-origin-removed'
+  | 'page-failed'
+  | 'coverage-degraded'
+  | 'scan-unhealthy'
+  | 'policy-accepted-update'
+  | 'pinned-hash-mismatch'
+  | 'vulnerable-library'
+  // PCI DSS support (docs/pci.md)
+  | 'security-header-changed'
+  | 'payment-form-changed'
+  | 'security-baseline-missing'
+  | 'script-unjustified';
 
 /** A single contribution to a finding's risk score, shown to users verbatim. */
 export interface Signal {
@@ -67,6 +79,8 @@ export interface Finding {
   readonly reason: string;
   readonly evidence: readonly Evidence[];
   readonly recommendedAction: string;
+  /** The script policy (scriptPolicies) that governs the affected resource, if any. */
+  readonly policy?: PolicyRef;
   /** Rule metadata for behaviour-indicator findings. */
   readonly ruleId?: string;
   /** Set when a configured suppression matched. Suppressed findings are reported but do not alert or fail builds. */

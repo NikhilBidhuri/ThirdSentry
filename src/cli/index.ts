@@ -10,8 +10,13 @@ import { registerReport } from './commands/report.js';
 import { registerAlert } from './commands/alert.js';
 import { registerPipeline } from './commands/pipeline.js';
 import { registerCspLint } from './commands/csp-lint.js';
+import { registerInventory } from './commands/inventory.js';
 import { registerCleanup } from './commands/cleanup.js';
+import { registerMetrics } from './commands/metrics.js';
+import { registerStatus } from './commands/status.js';
+import { registerVulnDb } from './commands/vulndb.js';
 import { color } from './output.js';
+import { lockStorageFor, releaseStorageLock } from './context.js';
 
 export function buildProgram(): Command {
   const program = new Command('thirdsentry');
@@ -22,8 +27,14 @@ export function buildProgram(): Command {
     .option('-v, --verbose', 'verbose logging')
     .option('--json', 'machine-readable JSON output on stdout')
     .option('-q, --quiet', 'only log warnings and errors')
+    .option('--lock-timeout <seconds>', 'wait up to this long for another ThirdSentry command using the same storage directory (default 0: fail immediately)')
     .showHelpAfterError()
     .exitOverride();
+  // Single writer: every command that writes the storage directory holds the
+  // storage lock for its whole run (released in main()).
+  program.hook('preAction', async (_root, actionCommand) => {
+    await lockStorageFor(actionCommand);
+  });
   registerInit(program);
   registerScan(program);
   registerBaseline(program);
@@ -31,8 +42,13 @@ export function buildProgram(): Command {
   registerReport(program);
   registerAlert(program);
   registerCspLint(program);
+  registerInventory(program);
   registerCleanup(program);
+  registerVulnDb(program);
   registerPipeline(program);
+  // Read-only (not in STORAGE_WRITING_COMMANDS): they never take the storage lock.
+  registerMetrics(program);
+  registerStatus(program);
   return program;
 }
 
@@ -58,5 +74,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       process.stderr.write('Run with --verbose for details.\n');
     }
     return ExitCode.InternalError;
+  } finally {
+    await releaseStorageLock();
   }
 }

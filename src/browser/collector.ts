@@ -1,14 +1,17 @@
-import { randomUUID } from 'node:crypto';
 import type { Limits, NetworkSecurityConfig } from '../config/schema.js';
 import type { ResolvedSite } from '../config/loader.js';
-import { EgressProxy, type ProxyConnectionEvent } from '../security/egress-proxy.js';
+import { EgressProxy } from '../security/egress-proxy.js';
 import { NetworkPolicy } from '../security/network-policy.js';
-import { EVIDENCE_SCHEMA_VERSION, type Issue, type PageEvidence, type PageStatus, type ScanEvidence, type SiteEvidence } from '../types/evidence.js';
+import { EVIDENCE_SCHEMA_VERSION, type Issue, type PageEvidence, type PageStatus, type ScanEvidence } from '../types/evidence.js';
 import { getLogger } from '../utils/logger.js';
 import { toolVersion } from '../utils/version.js';
 import { launchBrowser, type LaunchedBrowser } from './browser-manager.js';
 import { getBrowserProfile } from './browser-profiles.js';
+import { effectiveScanBudget, ScanEvidenceBudget } from './evidence-budget.js';
+import { MemorySink, type EvidenceSink } from './evidence-sink.js';
+import { runJourney } from './journey-runner.js';
 import { scanPage } from './page-scanner.js';
+import { ProxyTagRelay } from './proxy-tag-relay.js';
 
 /**
  * Everything the browser worker needs. Deliberately excludes alert settings,
@@ -22,12 +25,11 @@ export interface CollectRequest {
   readonly serviceWorkers: { strategy: 'block' | 'allow'; probeBlockedRegistrations: boolean };
   readonly chromiumSandbox: boolean;
   readonly isolation: 'process' | 'none' | 'container';
+  /** Run id used to tag connections to an external egress proxy (default: scanId). */
+  readonly proxyRunId?: string;
 }
 
-export function newScanId(now = new Date()): string {
-  const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-  return `${stamp}-${randomUUID().slice(0, 8)}`;
-}
+export { newScanId } from '../utils/scan-id.js';
 
 function worst(a: PageStatus, b: PageStatus): PageStatus {
   if (a === 'failed' || b === 'failed') return 'failed';
@@ -35,13 +37,13 @@ function worst(a: PageStatus, b: PageStatus): PageStatus {
   return 'complete';
 }
 
-function siteStatus(pages: readonly PageEvidence[]): PageStatus {
+export function siteStatus(pages: ReadonlyArray<{ readonly status: PageStatus }>): PageStatus {
   if (pages.length === 0) return 'failed';
   if (pages.every((p) => p.status === 'failed')) return 'failed';
   return pages.reduce<PageStatus>((acc, p) => (p.status === 'complete' ? acc : worst(acc, 'partial')), 'complete');
 }
 
-function skippedPage(page: ResolvedSite['pages'][number], code: string, message: string): PageEvidence {
+export function skippedPage(page: ResolvedSite['pages'][number], code: string, message: string): PageEvidence {
   const now = new Date().toISOString();
   return {
     pageKey: page.key,
@@ -67,8 +69,19 @@ function skippedPage(page: ResolvedSite['pages'][number], code: string, message:
   };
 }
 
-/** Run the browser collection for all requested sites. */
+/** Run the browser collection for all requested sites and return the evidence in memory. */
 export async function collectEvidence(request: CollectRequest): Promise<ScanEvidence> {
+  const sink = new MemorySink();
+  await runCollection(request, sink);
+  return sink.result();
+}
+
+/**
+ * Run the browser collection, emitting evidence to `sink` as each page and
+ * site completes, so a later crash or timeout cannot lose finished work and
+ * no single in-memory structure has to hold the evidence of the whole scan.
+ */
+export async function runCollection(request: CollectRequest, sink: EvidenceSink): Promise<void> {
   const log = getLogger('collector');
   const startedAt = new Date();
   const deadline = startedAt.getTime() + request.limits.maxScanDurationMs;
@@ -81,10 +94,15 @@ export async function collectEvidence(request: CollectRequest): Promise<ScanEvid
   });
 
   let proxy: EgressProxy | undefined;
+  let relay: ProxyTagRelay | undefined;
   let proxyUrl: string;
   if (request.network.externalProxy) {
-    proxyUrl = request.network.externalProxy;
-    issues.push({ level: 'info', code: 'external-proxy', message: 'Using external egress proxy; blocked-connection details are logged by the proxy container' });
+    // Connections are tagged <runId>.<site>; the egress proxy records them and
+    // the analyzer reads that trusted record (analyze --proxy-events).
+    const runId = request.proxyRunId ?? request.scanId;
+    relay = new ProxyTagRelay({ upstream: request.network.externalProxy, runId });
+    proxyUrl = (await relay.start()).url;
+    issues.push({ level: 'info', code: 'external-proxy', message: `Using external egress proxy; connection events are recorded by the proxy under run id ${runId}` });
   } else {
     proxy = new EgressProxy({
       policy,
@@ -92,7 +110,7 @@ export async function collectEvidence(request: CollectRequest): Promise<ScanEvid
       connectTimeoutMs: request.network.connectTimeoutMs,
       idleTimeoutMs: request.network.idleTimeoutMs,
       maxConnections: 512,
-      maxRecordedEvents: 20_000,
+      maxRecordedEvents: 5_000, // per site, for blocked and allowed events each
     });
     proxyUrl = (await proxy.start()).url;
   }
@@ -105,15 +123,36 @@ export async function collectEvidence(request: CollectRequest): Promise<ScanEvid
     });
   }
 
-  const sites: SiteEvidence[] = [];
+  await sink.begin({
+    schemaVersion: EVIDENCE_SCHEMA_VERSION,
+    scanId: request.scanId,
+    toolVersion: toolVersion(),
+    startedAt: startedAt.toISOString(),
+    isolation: request.isolation,
+    serviceWorkerStrategy: request.serviceWorkers.strategy,
+    issues,
+  });
+  const evidenceBudget = new ScanEvidenceBudget(effectiveScanBudget(request.limits));
   let pagesBudget = request.limits.maxPagesPerScan;
   try {
-    for (const site of request.sites) {
+    for (const [siteIndex, site] of request.sites.entries()) {
       const siteStarted = new Date().toISOString();
       const profile = getBrowserProfile(site.profile);
       const siteIssues: Issue[] = [];
-      const pages: PageEvidence[] = [];
-      const eventStart = proxy?.getEvents().events.length ?? 0;
+      const pages: Array<{ status: PageStatus }> = [];
+      const emit = async (page: PageEvidence): Promise<void> => {
+        await sink.page(siteIndex, pages.length, page);
+        pages.push({ status: page.status });
+      };
+      await sink.siteStarted(siteIndex, {
+        name: site.name,
+        url: site.url,
+        profile: site.profile,
+        browserName: profile.engine,
+        emulation: profile.emulation,
+        startedAt: siteStarted,
+      });
+      relay?.setSite(site.name);
       let launched: LaunchedBrowser | undefined;
       try {
         launched = await launchBrowser({ profile, proxyUrl, chromiumSandbox: request.chromiumSandbox });
@@ -131,22 +170,23 @@ export async function collectEvidence(request: CollectRequest): Promise<ScanEvid
         log.error({ site: site.name, err: message }, 'browser launch failed');
       }
       try {
-        for (const page of site.pages) {
+        // Journey captures (page.journey) are listed after the plain pages and run below.
+        for (const page of site.pages.filter((p) => !p.journey)) {
           if (!launched) {
-            pages.push(skippedPage(page, 'browser-launch-failed', 'Browser could not be launched'));
+            await emit(skippedPage(page, 'browser-launch-failed', 'Browser could not be launched'));
             continue;
           }
           if (pagesBudget <= 0) {
-            pages.push(skippedPage(page, 'page-limit', 'limits.maxPagesPerScan reached; page not scanned'));
+            await emit(skippedPage(page, 'page-limit', 'limits.maxPagesPerScan reached; page not scanned'));
             continue;
           }
           if (Date.now() > deadline - 5_000) {
-            pages.push(skippedPage(page, 'scan-time-limit', 'limits.maxScanDurationMs reached; page not scanned'));
+            await emit(skippedPage(page, 'scan-time-limit', 'limits.maxScanDurationMs reached; page not scanned'));
             continue;
           }
           pagesBudget--;
           log.info({ site: site.name, page: page.key }, 'scanning page');
-          pages.push(
+          await emit(
             await scanPage({
               browser: launched.browser,
               profile,
@@ -155,14 +195,49 @@ export async function collectEvidence(request: CollectRequest): Promise<ScanEvid
               limits: request.limits,
               serviceWorkers: request.serviceWorkers,
               deadline,
+              budget: evidenceBudget,
             }),
           );
+        }
+        for (const journey of site.journeys ?? []) {
+          const captures = journey.captures;
+          const skipAll = async (code: string, message: string): Promise<void> => {
+            for (const c of captures) await emit(skippedPage(c, code, message)); // sequential: emit() numbers pages in order
+          };
+          if (!launched) {
+            await skipAll('browser-launch-failed', 'Browser could not be launched');
+            continue;
+          }
+          if (pagesBudget < captures.length) {
+            await skipAll('page-limit', 'limits.maxPagesPerScan reached; journey not run');
+            continue;
+          }
+          if (Date.now() > deadline - 5_000) {
+            await skipAll('scan-time-limit', 'limits.maxScanDurationMs reached; journey not run');
+            continue;
+          }
+          pagesBudget -= captures.length;
+          log.info({ site: site.name, journey: journey.name }, 'running journey');
+          const results = await runJourney({
+            browser: launched.browser,
+            profile,
+            site,
+            journey,
+            limits: request.limits,
+            serviceWorkers: request.serviceWorkers,
+            deadline,
+            budget: evidenceBudget,
+          });
+          // Emitted in order, after the whole journey: a capture's evidence is only final once the journey ended.
+          for (const result of results) await emit(result);
         }
       } finally {
         await launched?.close();
       }
-      const events: ProxyConnectionEvent[] = proxy ? proxy.getEvents().events.slice(eventStart) : [];
-      sites.push({
+      // Per-site accounting: drainEvents() returns this site's events (capped per
+      // site by the proxy) and how many were dropped, then resets for the next site.
+      const proxyEvents = proxy ? proxy.drainEvents() : { events: [], dropped: 0 };
+      await sink.siteFinished(siteIndex, {
         name: site.name,
         url: site.url,
         profile: site.profile,
@@ -173,24 +248,14 @@ export async function collectEvidence(request: CollectRequest): Promise<ScanEvid
         issues: siteIssues,
         startedAt: siteStarted,
         finishedAt: new Date().toISOString(),
-        pages,
-        proxyEvents: events.filter((e) => !e.allowed).slice(0, 5_000).concat(events.filter((e) => e.allowed).slice(0, 5_000)),
-        proxyEventsDropped: Math.max(0, events.length - 10_000),
+        proxyEvents: proxyEvents.events,
+        proxyEventsDropped: proxyEvents.dropped,
       });
     }
   } finally {
     await proxy?.stop();
+    await relay?.stop();
   }
 
-  return {
-    schemaVersion: EVIDENCE_SCHEMA_VERSION,
-    scanId: request.scanId,
-    toolVersion: toolVersion(),
-    startedAt: startedAt.toISOString(),
-    finishedAt: new Date().toISOString(),
-    isolation: request.isolation,
-    serviceWorkerStrategy: request.serviceWorkers.strategy,
-    sites,
-    issues,
-  };
+  await sink.end({ finishedAt: new Date().toISOString(), issues });
 }

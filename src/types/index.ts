@@ -1,4 +1,5 @@
 import type { Issue, PageStatus, ProxyEvent } from './evidence.js';
+import type { FormFingerprint } from '../pci/form-fingerprint.js';
 
 export type { Issue, PageStatus, ProxyEvent } from './evidence.js';
 
@@ -41,6 +42,8 @@ export interface ResourceHashes {
   readonly sha256: string | null;
   /** Subresource-Integrity form of the raw hash (sha256-<base64>). */
   readonly sri: string | null;
+  /** Subresource-Integrity form of the raw SHA-384 (sha384-<base64>); used to verify pinned SRI hashes. */
+  readonly sri384?: string | null;
   /** SHA-256 (hex) of the normalised JavaScript, when parsing succeeded. */
   readonly normalizedSha256: string | null;
   /** Version of the normaliser that produced normalizedSha256. */
@@ -89,6 +92,18 @@ export interface ScriptResource {
   readonly firstSeenAt: string;
   /** Static-analysis indicators (Phase 3). */
   indicators?: IndicatorSummary;
+  /** Known JavaScript libraries recognised in this resource (name, version, how, how sure). */
+  libraries?: readonly DetectedLibrary[];
+}
+
+export type LibraryDetectionMethod = 'banner' | 'code' | 'url' | 'content-hash';
+
+export interface DetectedLibrary {
+  /** Canonical lower-case library name, e.g. "jquery". */
+  readonly name: string;
+  readonly version: string;
+  readonly method: LibraryDetectionMethod;
+  readonly confidence: 'low' | 'medium' | 'high';
 }
 
 export interface IndicatorMatch {
@@ -156,6 +171,12 @@ export interface PageResult {
   readonly pageErrors: readonly string[];
   readonly cspHeaders: readonly string[];
   readonly cspReportOnlyHeaders: readonly string[];
+  /** Normalised security-relevant document headers (PCI DSS 11.6.1). Absent when the document response was not observed. */
+  readonly securityHeaders?: Readonly<Record<string, string>>;
+  /** Canonical form structure of a sensitive page (absent on other pages or when the snapshot failed). */
+  readonly formFingerprint?: FormFingerprint;
+  /** True when a form snapshot was requested for this sensitive page but could not be taken. */
+  readonly formSnapshotFailed?: boolean;
   readonly screenshot?: string;
 }
 

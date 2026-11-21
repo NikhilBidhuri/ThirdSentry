@@ -5,28 +5,50 @@
 #   3. the egress proxy refuses cloud-metadata, internal and disallowed-port destinations,
 #   4. the analyzer container has no network at all,
 #   5. no alert secrets are visible inside the scanner.
-# Requires the image: docker build -t thirdsentry:local .
+#   (+ the analyzer reports a blocked-destination signal from the proxy's trusted record,
+#      although the page fetched http://169.254.169.254/ and the scanner is untrusted)
+# Builds both image targets (slim and browser) from the working tree.
 set -eu
 cd "$(dirname "$0")/../.."
 
 export THIRDSENTRY_PROJECT_DIR=./tests/docker/project
 export COMPOSE_PROJECT_NAME=thirdsentry-verify
-DC="docker compose -f docker-compose.yml -f tests/docker/compose.verify.yml"
+DC="docker compose --profile pipeline --profile tools -f docker-compose.yml -f tests/docker/compose.verify.yml"
 fail() { echo "FAIL: $*" >&2; $DC down -v >/dev/null 2>&1 || true; exit 1; }
 pass() { echo "PASS: $*"; }
 
+docker build --target slim -t thirdsentry:slim . >/dev/null || fail "slim image build failed"
+docker build --target browser -t thirdsentry:local . >/dev/null || fail "browser image build failed"
 $DC down -v >/dev/null 2>&1 || true
-$DC build fixture
+$DC build fixture scanner
 $DC up -d --no-build fixture egress-proxy
 
 # 1. Pipeline
 $DC run --rm -T scanner || fail "scanner run failed"
 status=0
 $DC run --rm -T analyzer >/tmp/thirdsentry-verify-analyze.txt 2>&1 || status=$?
-[ "$status" -eq 0 ] || { cat /tmp/thirdsentry-verify-analyze.txt; fail "analyzer exit code $status"; }
+# First run: no baseline yet, so nothing was compared. That must not look like
+# success (exit 0); it is reported as incomplete (exit 3) with first-run guidance.
+[ "$status" -eq 3 ] || { cat /tmp/thirdsentry-verify-analyze.txt; fail "analyzer exit code $status on a first run without baseline (expected 3)"; }
+grep -q "No approved baseline" /tmp/thirdsentry-verify-analyze.txt || fail "no first-run guidance for the missing baseline"
 grep -q "complete" /tmp/thirdsentry-verify-analyze.txt || fail "scan not complete"
 grep -q "vendor.js" /tmp/thirdsentry-verify-analyze.txt || fail "vendor.js not discovered"
-pass "pipeline produced a complete scan with the vendor script"
+pass "pipeline produced a complete scan with the vendor script (exit 3: no baseline yet)"
+
+# 1b. Blocked-connection evidence comes from the proxy's record, not from the scanner.
+# Approve the clean scan as baseline, make the page fetch the cloud-metadata
+# address, scan again: the analyzer must report a blocked-destination signal.
+if $DC run --rm -T --entrypoint sh scanner -c 'ls /proxy-events' >/dev/null 2>&1; then fail "scanner can see the proxy-events volume"; fi
+$DC run --rm -T tools baseline --yes >/dev/null 2>&1 || fail "could not approve the baseline"
+$DC exec -T fixture node -e "fetch('http://127.0.0.1:8080/__evil').then(r=>process.exit(r.status===204?0:1),()=>process.exit(1))" || fail "could not switch the fixture page"
+export THIRDSENTRY_RUN_ID=evil
+$DC run --rm -T scanner >/dev/null 2>&1 || fail "second scanner run failed"
+$DC run --rm -T analyzer >/tmp/thirdsentry-verify-analyze2.txt 2>&1 || true
+grep -q "blocked by the network policy" /tmp/thirdsentry-verify-analyze2.txt || fail "analyzer did not report the blocked connection"
+$DC run --rm -T --entrypoint sh analyzer -c 'cat /work/.thirdsentry/reports/report.json' >/tmp/thirdsentry-verify-report.json 2>/dev/null || fail "could not read the analyzer report"
+grep -q '"blocked-destination"' /tmp/thirdsentry-verify-report.json || fail "analyzer report has no blocked-destination finding"
+unset THIRDSENTRY_RUN_ID
+pass "blocked metadata fetch is reported from the proxy's trusted event record (scanner cannot reach it)"
 
 NODE_FETCH='fetch(process.argv[1], { signal: AbortSignal.timeout(5000) }).then(() => process.exit(0), () => process.exit(7))'
 

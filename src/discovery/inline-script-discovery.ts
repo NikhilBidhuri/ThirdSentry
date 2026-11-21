@@ -16,10 +16,39 @@ import { inlineIdentity } from './resource-identity.js';
  */
 export function discoverInlineScripts(page: PageEvidence, ctx: DiscoveryContext): ResourceCandidate[] {
   const groups = new Map<string, { mutation: DomScriptEvidence[]; snapshot: DomScriptEvidence[]; hash: string }>();
+  const out: ResourceCandidate[] = [];
+  const overBudget = new Set<string>();
   for (const el of page.domScripts) {
     if (el.kind !== 'inline') continue;
     const kind = scriptElementKind(el.type);
     if (kind === 'data') continue;
+    if (el.textStatus === 'budget-exceeded') {
+      // Text not stored (evidence budget exhausted): keep the element visible
+      // with unavailable content rather than dropping it.
+      const key = `${el.frameUrl}|${el.isMainFrame ? 'main' : 'sub'}|${el.domPath}`;
+      if (overBudget.has(key)) continue;
+      overBudget.add(key);
+      out.push(
+        compact<ResourceCandidate>({
+          identity: inlineIdentity(ctx.pageKey, el.frameUrl, el.isMainFrame, el.domPath),
+          type: kind === 'module' ? 'inline-module' : 'inline-script',
+          pageKey: ctx.pageKey,
+          redirectChain: [],
+          frameUrl: el.frameUrl,
+          frameContext: frameContextOf(el.frameUrl, el.isMainFrame),
+          partyUrl: el.frameUrl,
+          dynamic: el.insertedByScript,
+          discovery: ['dom-inline', el.observedVia === 'mutation' ? 'mutation-observer' : 'dom-snapshot', 'budget-exceeded'],
+          contentStatus: 'unavailable',
+          contentNote: 'Inline script text not stored: the evidence budget was exhausted',
+          declaredSize: el.textBytes,
+          fromServiceWorker: false,
+          domPath: el.domPath,
+          timestamp: el.timestamp,
+        }),
+      );
+      continue;
+    }
     const text = el.text ?? '';
     if (text.trim() === '') continue;
     const hash = sha256Hex(text);
@@ -29,7 +58,6 @@ export function discoverInlineScripts(page: PageEvidence, ctx: DiscoveryContext)
     groups.set(key, group);
   }
 
-  const out: ResourceCandidate[] = [];
   for (const group of groups.values()) {
     const snapshotPaths = [...new Set(group.snapshot.map((e) => e.domPath))].sort();
     const mutationPaths = [...new Set(group.mutation.map((e) => e.domPath))].sort();
@@ -38,7 +66,9 @@ export function discoverInlineScripts(page: PageEvidence, ctx: DiscoveryContext)
     const paths = [...snapshotPaths, ...extraMutation].slice(0, count);
     const representative = (group.mutation[0] ?? group.snapshot[0]) as DomScriptEvidence;
     const kind = scriptElementKind(representative.type);
-    const dynamic = group.mutation.length > 0 && group.mutation.every((e) => e.insertedByScript);
+    // Any report of runtime injection counts; a forged "parser-inserted"
+    // report must not hide the signal.
+    const dynamic = group.mutation.some((e) => e.insertedByScript);
     const removed = extraMutation.length > 0 && group.snapshot.length > 0;
     const truncated = [...group.mutation, ...group.snapshot].some((e) => e.textTruncated);
     const body = Buffer.from(representative.text ?? '', 'utf8');

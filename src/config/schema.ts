@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { RULES_BY_ID } from '../analysis/indicator-rules.js';
+import { checkPolicyNames, ScriptPolicySchema } from '../policies/schema.js';
+import { JourneySchema, MAX_JOURNEYS_PER_SITE } from './journeys.js';
 
 /**
  * ThirdSentry configuration schema (thirdsentry.yml).
@@ -51,6 +53,9 @@ export const BrowserOptionsSchema = z
   })
   .strict();
 
+/** Query parameters that only bust caches; ignored when matching resources unless a site overrides the list. */
+export const DEFAULT_IGNORE_QUERY_PARAMS = ['cb', '_', 't', 'ts', 'timestamp', 'cachebust', 'cachebuster', 'nocache', 'rnd', 'rand', 'random'] as const;
+
 export const SiteSchema = z
   .object({
     name: siteName,
@@ -61,10 +66,14 @@ export const SiteSchema = z
     sensitivePages: z.array(z.string().min(1)).default([]),
     /** Additional registrable domains treated as first-party (e.g. your own CDN). */
     firstPartyDomains: z.array(hostPattern).default([]),
-    /** Query parameter names ignored when computing canonical resource identity (e.g. cache busters). */
-    ignoreQueryParams: z.array(z.string().min(1)).default([]),
+    /** Query parameter names ignored when computing canonical resource identity (cache busters by default; set [] to disable). */
+    ignoreQueryParams: z.array(z.string().min(1)).default([...DEFAULT_IGNORE_QUERY_PARAMS]),
+    /** Script policies for this site (see docs/policies.md); they take precedence over a global policy of equal specificity. */
+    scriptPolicies: z.array(ScriptPolicySchema).default([]),
     browser: BrowserOptionsSchema.partial().optional(),
     scan: ScanOptionsSchema.partial().optional(),
+    /** Logged-in, multi-step journeys (login -> cart -> checkout). See docs/configuration.md. */
+    journeys: z.array(JourneySchema).max(MAX_JOURNEYS_PER_SITE).default([]),
   })
   .strict();
 
@@ -81,6 +90,12 @@ export const LimitsSchema = z
     maxScanDurationMs: z.number().int().min(10_000).max(24 * 3600_000).default(30 * 60_000),
     /** Maximum size of the evidence handed from the browser worker to the analyser. */
     maxEvidenceBytes: z.number().int().min(1024 * 1024).max(4 * 1024 * 1024 * 1024).default(512 * 1024 * 1024),
+    /** Evidence budget per page (captured bodies, inline text, blobs, metadata). Excess bodies are recorded as `budget-exceeded`. */
+    maxEvidenceBytesPerPage: z.number().int().min(1024 * 1024).max(1024 * 1024 * 1024).default(64 * 1024 * 1024),
+    /** Evidence budget for the whole scan (also capped at 75% of maxEvidenceBytes). */
+    maxEvidenceBytesPerScan: z.number().int().min(1024 * 1024).max(4 * 1024 * 1024 * 1024).default(256 * 1024 * 1024),
+    /** Calls the page may make to the in-page reporting binding before further reports are ignored. */
+    maxReportCallsPerPage: z.number().int().min(100).max(1_000_000).default(5_000),
     /** Maximum bytes transferred through a single proxied connection. */
     maxBytesPerConnection: z.number().int().min(1024 * 1024).max(1024 * 1024 * 1024).default(50 * 1024 * 1024),
   })
@@ -149,14 +164,20 @@ export const ServiceWorkerSchema = z
 
 export const RetentionSchema = z
   .object({
-    /** Store script bodies in .thirdsentry/cache/content (needed for code diffs). Off by default. */
-    storeScriptContent: z.boolean().default(false),
-    /** Number of scan reports to keep. */
+    /**
+     * Which script bodies to keep in .thirdsentry/cache/content (needed for code diffs):
+     * `none`, `findings` (approved versions and versions behind findings; default) or `all`.
+     */
+    scriptContent: z.enum(['none', 'findings', 'all']).optional(),
+    /** Deprecated: `true` = scriptContent `all`, `false` = `none`. */
+    storeScriptContent: z.boolean().optional(),
+    /** Number of scan reports to keep per site. */
     maxScanReports: z.number().int().min(1).max(100_000).default(50),
     /** Delete scan reports and cached content older than this many days. */
     maxAgeDays: z.number().int().min(1).max(3650).default(90),
   })
-  .strict();
+  .strict()
+  .refine((r) => r.scriptContent === undefined || r.storeScriptContent === undefined, 'set either retention.scriptContent or the deprecated retention.storeScriptContent, not both');
 
 export const RiskSchema = z
   .object({
@@ -197,6 +218,24 @@ export const AnalysisSchema = z
   })
   .strict();
 
+export const LibrariesSchema = z
+  .object({
+    /** Recognise known JavaScript libraries and versions (offline, from banners, code and URLs). */
+    detect: z.boolean().default(true),
+    /** Raise findings for known vulnerabilities (CVE) in detected libraries. Needs detect. */
+    vulnerabilities: z.boolean().default(true),
+    /** Only advisories at or above this severity are reported. */
+    minSeverity: z.enum(['low', 'medium', 'high', 'critical']).default('low'),
+    /** Warn when the cached vulnerability database is older than this many days. */
+    maxDbAgeDays: z.number().int().min(1).max(3650).default(30),
+    /** Exact content hashes of files you know (SHA-256), mapped to a library and version. */
+    knownHashes: z
+      .array(z.object({ sha256: z.string().regex(/^[0-9a-fA-F]{64}$/), name: z.string().min(1).max(100), version: z.string().min(1).max(40) }).strict())
+      .max(1000)
+      .default([]),
+  })
+  .strict();
+
 export const DomainPolicySchema = z
   .object({
     /** Domains/hosts treated as approved everywhere (never reported as new). */
@@ -220,6 +259,8 @@ export const SuppressionSchema = z
     resource: z.string().max(4096).optional(),
     /** Domain/host pattern. */
     domain: hostPattern.optional(),
+    /** Name of a script policy (scriptPolicies): matches findings that policy affected. */
+    policy: z.string().max(64).optional(),
     /** Why this is suppressed. Required: undocumented suppressions are not allowed. */
     reason: z.string().min(3).max(2_000),
     /** ISO date after which the suppression stops applying. */
@@ -229,7 +270,7 @@ export const SuppressionSchema = z
       .optional(),
   })
   .strict()
-  .refine((s) => s.id ?? s.kind ?? s.rule ?? s.resource ?? s.domain, 'a suppression needs at least one of id, kind, rule, resource or domain');
+  .refine((s) => s.id ?? s.kind ?? s.rule ?? s.resource ?? s.domain ?? s.policy, 'a suppression needs at least one of id, kind, rule, resource, domain or policy');
 
 /**
  * Alert settings. Values may reference environment variables as ${NAME};
@@ -290,6 +331,34 @@ export const EmailAlertSchema = z
   })
   .strict();
 
+export const PagerDutyAlertSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    /** Events API v2 integration (routing) key. */
+    routingKey: envString.default('${THIRDSENTRY_PAGERDUTY_ROUTING_KEY}'),
+    minSeverity: alertSeverity.default('high'),
+    /** Events API endpoint (use https://events.eu.pagerduty.com/v2/enqueue for the EU service region). */
+    apiUrl: envString.default('https://events.pagerduty.com/v2/enqueue'),
+    /** Send "resolve" when a triggered finding is gone from the latest complete scan of its site. */
+    autoResolve: z.boolean().default(false),
+    /** Most events (triggers, and separately resolves) sent per run; the rest stays pending. */
+    maxEventsPerRun: z.number().int().min(1).max(100).default(20),
+    /** Allow a plain-http apiUrl (tests only). Off by default. */
+    allowInsecureHttp: z.boolean().default(false),
+  })
+  .strict();
+
+export const TeamsAlertSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    /** Workflows (Power Automate) "post to a channel when a webhook request is received" URL. */
+    webhookUrl: envString.default('${THIRDSENTRY_TEAMS_WEBHOOK}'),
+    minSeverity: alertSeverity.optional(),
+    /** Allow a plain-http URL (tests only). Off by default. */
+    allowInsecureHttp: z.boolean().default(false),
+  })
+  .strict();
+
 export const AlertsSchema = z
   .object({
     /** Only findings at or above this severity are sent (per-channel minSeverity overrides). */
@@ -306,6 +375,46 @@ export const AlertsSchema = z
     webhook: WebhookAlertSchema.prefault({}),
     github: GithubAlertSchema.prefault({}),
     email: EmailAlertSchema.prefault({}),
+    pagerduty: PagerDutyAlertSchema.prefault({}),
+    teams: TeamsAlertSchema.prefault({}),
+  })
+  .strict();
+
+export const HeartbeatSchema = z
+  .object({
+    /** Ping URL of a push monitor (healthchecks.io, Cronitor, Uptime Kuma). Usually an ${ENV} reference: the URL is a secret. */
+    url: envString.default('${THIRDSENTRY_HEARTBEAT_URL}'),
+    /** Explicit URL for failure pings. Default: `url` + `failPath`. */
+    failUrl: envString.optional(),
+    /** Appended to the URL path for failure pings when failUrl is not set (healthchecks.io convention). Empty string = send no failure ping. */
+    failPath: z.string().max(100).default('/fail'),
+    /** What an incomplete (partial) scan sends: the failure ping, the success ping, or nothing. */
+    onIncomplete: z.enum(['fail', 'success', 'skip']).default('fail'),
+    /** Single attempt, no retries. */
+    timeoutMs: z.number().int().min(500).max(30_000).default(5_000),
+  })
+  .strict();
+
+export const HealthSchema = z
+  .object({
+    /** Raise a `scan-unhealthy` finding after this many consecutive failed (or incomplete) scans of a site. */
+    failureThreshold: z.number().int().min(1).max(1_000).default(3),
+    /** Count incomplete (partial) scans as failures; false counts only scans that failed outright. */
+    countIncomplete: z.boolean().default(true),
+    /** Dead-man's-switch ping, sent by the alert step only. Not configured = no heartbeat. */
+    heartbeat: HeartbeatSchema.optional(),
+  })
+  .strict();
+
+export const PciSchema = z
+  .object({
+    /**
+     * Report scripts on sensitive pages that lack a documented justification
+     * (PCI DSS 6.4.3) as info/low `script-unjustified` findings.
+     */
+    requireJustification: z.boolean().default(false),
+    /** Default review interval in days used by "thirdsentry inventory add" when --review-by is not given. */
+    reviewIntervalDays: z.number().int().min(1).max(3650).default(365),
   })
   .strict();
 
@@ -336,11 +445,16 @@ export const ConfigSchema = z
     retention: RetentionSchema.prefault({}),
     risk: RiskSchema.prefault({}),
     analysis: AnalysisSchema.prefault({}),
+    libraries: LibrariesSchema.prefault({}),
     rules: z.record(z.string().regex(/^TS-[A-Z0-9-]+$/, 'rule ids look like TS-EVAL'), RuleConfigSchema).default({}),
     domains: DomainPolicySchema.prefault({}),
     suppressions: z.array(SuppressionSchema).default([]),
+    /** Explicit per-script policies for vendors whose scripts rotate (pin, path-versions, domain-only). */
+    scriptPolicies: z.array(ScriptPolicySchema).default([]),
     reporting: ReportingSchema.prefault({}),
+    pci: PciSchema.prefault({}),
     alerts: AlertsSchema.prefault({}),
+    health: HealthSchema.prefault({}),
     /** Default --fail-on threshold for scan/diff (`none` never fails on findings). */
     failOn: z.enum([...SEVERITIES, 'none']).default('high'),
   })
@@ -352,7 +466,13 @@ export const ConfigSchema = z
         ctx.addIssue({ code: 'custom', path: ['sites', i, 'name'], message: `duplicate site name "${site.name}"` });
       }
       seen.add(site.name);
+      const journeyNames = new Set<string>();
+      site.journeys.forEach((j, ji) => {
+        if (journeyNames.has(j.name)) ctx.addIssue({ code: 'custom', path: ['sites', i, 'journeys', ji, 'name'], message: `duplicate journey name "${j.name}"` });
+        journeyNames.add(j.name);
+      });
     });
+    checkPolicyNames(cfg.scriptPolicies, cfg.sites, (path, message) => ctx.addIssue({ code: 'custom', path, message }));
     for (const id of Object.keys(cfg.rules)) {
       if (!RULES_BY_ID.has(id)) {
         ctx.addIssue({ code: 'custom', path: ['rules', id], message: `unknown rule "${id}" (known: ${[...RULES_BY_ID.keys()].join(', ')})` });
@@ -370,4 +490,7 @@ export type NetworkSecurityConfig = z.infer<typeof NetworkSecuritySchema>;
 export type RuleConfig = z.infer<typeof RuleConfigSchema>;
 export type DomainPolicy = z.infer<typeof DomainPolicySchema>;
 export type Suppression = z.infer<typeof SuppressionSchema>;
+export type PciConfig = z.infer<typeof PciSchema>;
 export type AlertsConfig = z.infer<typeof AlertsSchema>;
+export type HealthConfig = z.infer<typeof HealthSchema>;
+export type HeartbeatConfig = z.infer<typeof HeartbeatSchema>;

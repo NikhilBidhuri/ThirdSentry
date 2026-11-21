@@ -4,18 +4,35 @@
 #
 #   egress-proxy  only container with internet access; enforces the network policy
 #                 (blocks private, loopback, link-local and metadata addresses per connection)
-#   scanner       runs the browser; NO internet route (internal network), NO secrets,
-#                 NO baselines; can only reach the egress proxy
+#                 and records connection events per run/site on the proxy-events volume
+#   scanner       runs the browser; NO internet route (internal network), NO baselines;
+#                 can only reach the egress proxy. No secrets, except the optional
+#                 journeys.env (journey test-account credentials) that only it reads
 #   analyzer      NO network at all; validates evidence, compares with read-only baselines,
-#                 writes reports
+#                 takes connection events from the proxy's record (read-only), writes reports
 #   alerter       only container that receives alert credentials (.env); reads reports
+#   metrics       optional (profile "metrics"): read-only Prometheus exporter on 127.0.0.1:9464,
+#                 no credentials, read-only volumes, no outbound route (see docs/monitoring.md)
+#
+# Images (one Dockerfile, two targets; see Dockerfile):
+#   thirdsentry:slim   Node.js only (~400 MB): egress-proxy, analyzer, alerter, tools
+#   thirdsentry:local  Playwright image with browsers (~3.7 GB): scanner only
+#
+# Per-run files: THIRDSENTRY_RUN_ID names this run's evidence file
+# (/evidence/<run>.json) and the egress proxy's event record
+# (/proxy-events/<run>.ndjson). scripts/run-scan.sh sets it; the default only
+# serves manual `docker compose run` use.
+#
+# The egress proxy reads thirdsentry.yml once, at start. scripts/run-scan.sh
+# passes THIRDSENTRY_PROXY_CONFIG_HASH so that `up -d` recreates the proxy when
+# the file changed; when running compose by hand, use
+# `docker compose up -d --force-recreate egress-proxy` after editing it.
 #
 # Run a scan:     ./scripts/run-scan.sh        (see docs/docker.md)
 # Project files:  THIRDSENTRY_PROJECT_DIR (default ./examples/project) must contain
 #                 thirdsentry.yml and .thirdsentry/baselines/
 
 x-hardening: &hardening
-  image: thirdsentry:local
   read_only: true
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
@@ -23,26 +40,53 @@ x-hardening: &hardening
   tmpfs:
     - /tmp:size=256m,mode=1777
 
+x-slim: &slim
+  <<: *hardening
+  image: thirdsentry:slim
+  build: { context: ., target: slim }
+
+x-browser: &browser
+  <<: *hardening
+  image: thirdsentry:local
+  build: { context: ., target: browser }
+
 x-config: &config-volume ${THIRDSENTRY_PROJECT_DIR:-./examples/project}/thirdsentry.yml:/work/thirdsentry.yml:ro
 
 services:
   egress-proxy:
-    <<: *hardening
-    build: .
-    command: ["--config", "/work/thirdsentry.yml", "egress-proxy", "--listen", "0.0.0.0:3128"]
-    volumes: [*config-volume]
+    <<: *slim
+    command: ["--config", "/work/thirdsentry.yml", "egress-proxy", "--listen", "0.0.0.0:3128", "--events-dir", "/proxy-events"]
+    environment:
+      # Changes when thirdsentry.yml changes, which makes `up -d` recreate the proxy.
+      THIRDSENTRY_PROXY_CONFIG_HASH: ${THIRDSENTRY_PROXY_CONFIG_HASH:-unset}
+    volumes:
+      - *config-volume
+      # Trusted record of connections per run and site. Only the proxy writes it.
+      - proxy-events:/proxy-events
+    healthcheck:
+      test: ["CMD", "node", "-e", "const s=require('node:net').connect(3128,'127.0.0.1',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
     networks: [scan-internal, egress]
     mem_limit: 256m
     pids_limit: 128
     restart: unless-stopped
 
   scanner:
-    <<: *hardening
+    <<: *browser
     profiles: [pipeline]
     # Chromium's own sandbox needs privileges this hardened container does not
     # have; the container (no capabilities, read-only rootfs, no route to the
     # internet or your network, no secrets) is the isolation boundary instead.
-    command: ["--config", "/work/thirdsentry.yml", "collect", "--out", "/evidence/evidence.json", "--proxy", "http://egress-proxy:3128", "--no-chromium-sandbox"]
+    # The scanner does NOT mount proxy-events: it cannot read or alter the record.
+    command: ["--config", "/work/thirdsentry.yml", "collect", "--out", "/evidence/${THIRDSENTRY_RUN_ID:-manual}.json", "--run-id", "${THIRDSENTRY_RUN_ID:-manual}", "--proxy", "http://egress-proxy:3128", "--no-chromium-sandbox"]
+    # Credentials for logged-in journeys (${THIRDSENTRY_SECRET_<NAME>} in fill steps): ONLY this service reads
+    # journeys.env, never the alerter or the analyzer. Optional; use dedicated, least-privilege test accounts.
+    env_file:
+      - path: journeys.env
+        required: false
     volumes:
       - *config-volume
       - evidence:/evidence
@@ -50,29 +94,36 @@ services:
       - /tmp:size=1g,mode=1777
       - /home/pwuser:size=256m,uid=1000,gid=1000
     networks: [scan-internal]
-    depends_on: [egress-proxy]
+    depends_on:
+      egress-proxy:
+        condition: service_healthy
     shm_size: 1gb
     mem_limit: 2g
     cpus: 2
     pids_limit: 512
 
   analyzer:
-    <<: *hardening
+    <<: *slim
     profiles: [pipeline]
-    command: ["--config", "/work/thirdsentry.yml", "analyze", "--evidence", "/evidence/evidence.json"]
+    command: ["--config", "/work/thirdsentry.yml", "analyze", "--evidence", "/evidence/${THIRDSENTRY_RUN_ID:-manual}.json", "--proxy-events", "/proxy-events/${THIRDSENTRY_RUN_ID:-manual}.ndjson"]
     network_mode: none
     volumes:
       - *config-volume
       - ${THIRDSENTRY_PROJECT_DIR:-./examples/project}/.thirdsentry/baselines:/work/.thirdsentry/baselines:ro
+      # PCI DSS 6.4.3 script inventory (docs/pci.md), committed next to the baselines.
+      - ${THIRDSENTRY_PROJECT_DIR:-./examples/project}/.thirdsentry/inventory:/work/.thirdsentry/inventory:ro
       - evidence:/evidence:ro
+      - proxy-events:/proxy-events:ro
       - reports:/work/.thirdsentry/reports
       - state:/work/.thirdsentry/state
       - cache:/work/.thirdsentry/cache
+      # Vulnerability database written by vulndb-updater; the analyzer only reads it.
+      - vulndb:/work/.thirdsentry/cache/vulndb:ro
     mem_limit: 1g
     pids_limit: 128
 
   alerter:
-    <<: *hardening
+    <<: *slim
     profiles: [pipeline]
     command: ["--config", "/work/thirdsentry.yml", "alert"]
     env_file:
@@ -86,27 +137,75 @@ services:
     mem_limit: 256m
     pids_limit: 64
 
+  # Optional Prometheus exporter (docs/monitoring.md): docker compose --profile metrics up -d metrics
+  # Serves /metrics and /healthz from the report and health files, read-only and without
+  # authentication. The only way in is the port published on the HOST'S LOOPBACK; the
+  # network below has no outbound route (masquerading off) and nothing else is attached.
+  metrics:
+    <<: *slim
+    profiles: [metrics]
+    command: ["--config", "/work/thirdsentry.yml", "metrics", "--serve", "0.0.0.0:9464"]
+    ports:
+      - "127.0.0.1:${THIRDSENTRY_METRICS_PORT:-9464}:9464"
+    volumes:
+      - *config-volume
+      - reports:/work/.thirdsentry/reports:ro
+      - state:/work/.thirdsentry/state:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9464/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [metrics]
+    mem_limit: 128m
+    pids_limit: 64
+    restart: unless-stopped
+  # Downloads the library vulnerability database (retire.js). Short-lived:
+  #   docker compose run --rm vulndb-updater
+  # The only thing it can write is the vulndb volume. It has internet egress (like the
+  # alerter) but no alert credentials, no baselines, no reports, no state and no scan
+  # evidence, and it uses the SSRF-safe client. Not part of the scan pipeline; the analyzer
+  # (network_mode: none) and tools mount the volume read-only. See docs/libraries.md.
+  vulndb-updater:
+    <<: *slim
+    profiles: [vulndb]
+    command: ["--config", "/work/thirdsentry.yml", "vulndb", "update"]
+    volumes:
+      - *config-volume
+      - vulndb:/work/.thirdsentry/cache/vulndb
+    networks: [egress]
+    mem_limit: 256m
+    pids_limit: 64
+
   # Maintenance commands (baseline, diff, report, cleanup). No network.
   # Example: docker compose run --rm tools baseline
   tools:
-    <<: *hardening
+    <<: *slim
     profiles: [tools]
     network_mode: none
     volumes:
       - *config-volume
       - ${THIRDSENTRY_PROJECT_DIR:-./examples/project}/.thirdsentry/baselines:/work/.thirdsentry/baselines
+      - ${THIRDSENTRY_PROJECT_DIR:-./examples/project}/.thirdsentry/inventory:/work/.thirdsentry/inventory
       - reports:/work/.thirdsentry/reports
       - state:/work/.thirdsentry/state
       - cache:/work/.thirdsentry/cache
+      - vulndb:/work/.thirdsentry/cache/vulndb:ro
     entrypoint: ["node", "/opt/thirdsentry/dist/cli/bin.js", "--config", "/work/thirdsentry.yml"]
 
 volumes:
   evidence:
+  proxy-events:
   reports:
   state:
   cache:
+  vulndb:
 
 networks:
+  # Only for the optional metrics exporter: a published port works, but nothing can leave.
+  metrics:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
   # internal: true = no route to the internet or the host network.
   scan-internal:
     internal: true

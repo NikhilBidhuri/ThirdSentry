@@ -59,7 +59,9 @@ afterEach(() => {
 
 describe('drift detection end to end', () => {
   it('first scan without a baseline reports no findings and asks for a baseline', async () => {
-    const r = await cli('scan');
+    const strict = await cli('scan');
+    expect(strict.code).toBe(3); // no baseline: nothing was compared
+    const r = await cli('scan', '--allow-missing-baseline');
     expect(r.code).toBe(0);
     const rep = await report();
     expect(rep.sites[0]?.baseline.exists).toBe(false);
@@ -164,4 +166,17 @@ describe('drift detection end to end', () => {
     const r = await cli('baseline', '--approve', 'TS-doesnotexist', '--yes');
     expect(r.code).toBe(2);
   });
+
+  it('reports a failed sensitive page and refuses to "approve" it into the baseline', async () => {
+    server.html('shop.test', '/checkout', 'Internal error');
+    server.set('shop.test', '/checkout', { ...server.routes.get('shop.test/checkout')!, status: 500 });
+    await cli('scan', '--no-alerts');
+    const failed = (await report()).findings.find((f) => f.kind === 'page-failed');
+    expect(failed).toBeDefined();
+    const baselineFile = join(dir, '.thirdsentry', 'baselines', 'shop', 'baseline.json');
+    const before = await readFile(baselineFile, 'utf8');
+    const r = await cli('baseline', '--approve', failed!.id, '--yes');
+    expect(r.code).toBe(2);
+    expect(await readFile(baselineFile, 'utf8')).toBe(before);
+  }, 120_000);
 });

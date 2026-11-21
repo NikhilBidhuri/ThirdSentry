@@ -74,7 +74,7 @@ serviceWorkers:
   probeBlockedRegistrations: true
 
 retention:
-  storeScriptContent: false
+  scriptContent: findings
   maxScanReports: 50
   maxAgeDays: 90
 ```
@@ -89,9 +89,10 @@ retention:
 | `pages` | string[] | `["/"]` | Paths (starting with `/`) or absolute URLs to visit. Query strings are kept. |
 | `sensitivePages` | string[] | `[]` | Pages handling payments, logins or personal data. Findings there score higher. A trailing `*` matches a prefix (`/account/*`). |
 | `firstPartyDomains` | host patterns | `[]` | Extra domains you own. Resources there count as first-party. `*.example.com` matches subdomains. |
-| `ignoreQueryParams` | string[] | `[]` | Query parameter names removed from the *identity* of a resource (cache busters). The stored URL is never modified. |
+| `ignoreQueryParams` | string[] | `[cb, _, t, ts, timestamp, cachebust, cachebuster, nocache, rnd, rand, random]` | Query parameter names removed from the *identity* of a resource (cache busters), so `a.js?cb=123` is the same resource every scan. Setting the key replaces the default list (`[]` disables it; include the defaults you still want). Matching is case-sensitive. The stored URL is never modified. |
 | `browser.profile` | enum | from `defaults` | Browser profile (see below). |
 | `scan.*` | object | from `defaults` | Per-site overrides of the scan options below. |
+| `journeys` | list | `[]` | Logged-in, multi-step journeys such as login, cart, checkout. See [Journeys](#journeys). |
 
 ### Browser profiles
 
@@ -113,6 +114,77 @@ retention:
 | `settleMs` | `3000` | Additional observation time after loading, to catch scripts injected with a delay. |
 | `captureScreenshots` | `false` | Save a viewport screenshot per page in `reports/screenshots/`. Screenshots can contain personal data shown on the page. |
 | `userAgent` | profile UA | Override the user agent. |
+
+## Journeys
+
+Payment pages usually need a session, so a plain visit cannot reach them. A *journey* is a short declarative script that runs in **one browser context** (cookies persist between steps) and records evidence at `capture` checkpoints. Each capture is a normal page for everything downstream: its key is `journey:<journey>/<capture>`, so baselines, comparison, findings, reports and `sensitive` scoring work unchanged. Journeys run after the plain `pages` of the site, each in a fresh context; one journey failing never stops other journeys or pages.
+
+```yaml
+sites:
+  - name: shop
+    url: https://www.example.com
+    pages: ["/"]
+    journeys:
+      - name: purchase
+        sensitive: true            # findings on all its captures are scored as sensitive
+        timeoutMs: 120000          # whole journey (default 120000, max 600000); also bounded by limits.maxScanDurationMs
+        # storageState: sessions/shop.json   # optional: start from a saved authenticated session
+        # allowedHosts: [checkout.partner.example]   # extra hosts goto/navigation may use
+        steps:
+          - { type: goto, url: /login }
+          - { type: fill, selector: "#email", value: "qa-monitor@example.com" }
+          - { type: fill, selector: "#password", value: "${THIRDSENTRY_SECRET_SHOP_PASSWORD}" }
+          - { type: click, selector: "button[type=submit]" }        # a login submit is fine
+          - { type: waitFor, url: "**/account" }
+          - { type: capture, name: account, sensitive: false }
+          - { type: goto, url: /cart }
+          - { type: capture, name: cart }
+          - { type: click, selector: "#checkout-button" }
+          - { type: waitFor, selector: "form#payment" }
+          - { type: capture, name: checkout }                      # key: journey:purchase/checkout
+```
+
+### Step types
+
+| `type` | Keys | Notes |
+| --- | --- | --- |
+| `goto` | `url` | Path or URL of the site. Must stay on the site's registrable domain or a host in `allowedHosts`; checked when the configuration loads. |
+| `click` | `selector`, `allowSubmit` | Playwright selector, must match exactly one element. See the [submit guard](#submit-guard). |
+| `fill` | `selector`, `value` | `value` is literal text or may contain `${THIRDSENTRY_SECRET_<NAME>}`. See [secrets](#journey-secrets). |
+| `select` | `selector`, `value` | Selects an `<option>` by value or label. |
+| `check` | `selector`, `checked` (default `true`) | Checks or unchecks a checkbox or radio button. |
+| `press` | `key`, `selector` (optional), `allowSubmit` | A key such as `Enter` or `Control+A`, in the selected or focused element. |
+| `waitFor` | exactly one of `selector`, `url` (glob, e.g. `**/checkout`), `loadState` | Waits for a visible element, a URL, or a load state. |
+| `capture` | `name`, `sensitive` | Records evidence. Names are unique per journey. |
+
+Every step except `capture` accepts `timeoutMs` (500-120000, default `scan.timeout`), always cut short by the journey and scan deadlines. A journey has at most 100 steps, a site at most 20 journeys, and needs at least one `capture`. There is no step that evaluates code or reads values.
+
+**What a capture contains.** Network and script activity since the previous capture (or the start of the journey) plus a DOM snapshot at capture time, built by the same collectors as a plain page. After the capture the page keeps its session and the next segment starts empty.
+
+**Starting from a saved session.** `storageState` is the path (relative to the config file) of a Playwright storage-state JSON file. Use it instead of, or before, scripted login, for example for accounts with MFA. The file must exist where the browser runs (the scanner container in the Docker setup), contains live session cookies, and must be treated like a password: dedicated test account, restricted file permissions, never committed.
+
+**Failures.** If a step fails, the next capture of that journey is reported `failed` with a `journey-step-failed` issue naming the step number, type and selector (never values, never raw browser error text), and the remaining captures are `failed` with `journey-not-reached`. Captures taken before the failure stay valid. Failed captures are not compared and cannot be baselined, so a broken login never looks like "all checkout scripts were removed".
+
+### Journey secrets
+
+Logging in requires credentials in the browser. This is the one place where the browser worker receives a secret, so it is deliberately narrow:
+
+- Only the `value` of a `fill` step may reference a secret, and only as `${THIRDSENTRY_SECRET_<NAME>}` (uppercase letters, digits, `_`). Any other `${...}` (for example `${HOME}` or `${GITHUB_TOKEN}`) is rejected when the configuration loads, as is a reference anywhere else in a journey.
+- The configuration and the worker request only ever hold the reference. The worker's allowlisted environment receives exactly the variables the journeys reference, and never alert credentials.
+- A missing variable fails the journey immediately (the issue names the variable). A resolved secret shorter than 8 characters is refused, because it could not be redacted reliably.
+- The typed value never appears in evidence, logs, reports or error messages: step issues carry only index, type and selector, and every capture is scrubbed of the secret (also URL-encoded and base64 forms) before it is written. If scrubbing had to remove something, the capture gets a `secret-redacted` warning (the site echoed the credential). Screenshots mask typed fields. Request bodies are never recorded.
+- **Use dedicated test accounts with least privilege**: no admin rights, no stored payment methods, no real personal data, a password used nowhere else. Rotate it like any credential.
+
+### Submit guard
+
+A scan must never complete a purchase by accident. A `click` on a submit button, or `press` of `Enter` in a field, of a form that looks like a payment form (card fields or `autocomplete="cc-*"`, hosted card or payment iframes, or an action containing pay, payment, charge, purchase or place-order) is refused unless the step sets `allowSubmit: true`. Login forms are not affected. The check is a heuristic on the DOM: when it does not recognise a form, nothing stops you, so do not point a journey at a button that charges money. **Never use live payment credentials.** If a journey must submit a payment form, use a payment sandbox with test cards and `allowSubmit: true`.
+
+### Safety summary
+
+- Each step and each journey has a timeout, within the scan deadline (`limits.maxScanDurationMs`); captures count toward `limits.maxPagesPerScan`.
+- Top-level navigation (`goto`, clicks, redirects) is limited to the site's registrable domain plus `allowedHosts`. Other navigations are aborted and fail the step.
+- All traffic still goes through the egress proxy and its network policy.
+- Works in `process`, `none` and container isolation (`collect`). See [docker.md](docker.md#journeys-and-credentials).
 
 ## `limits`
 
@@ -158,8 +230,8 @@ See [privacy.md](privacy.md).
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `storeScriptContent` | `false` | Keep script bodies in `.thirdsentry/cache/content/` (content-addressed). Needed to show code diffs between versions. |
-| `maxScanReports` | `50` | Scan result files to keep. |
+| `scriptContent` | `findings` | Which script bodies to keep in `.thirdsentry/cache/content/` (content-addressed): `none`, `findings` (approved versions and versions involved in findings, so `diff` can show code changes) or `all`. The deprecated `storeScriptContent: true/false` means `all`/`none`. See [privacy.md](privacy.md). |
+| `maxScanReports` | `50` | Scan result files to keep per site. |
 | `maxAgeDays` | `90` | Delete scan results, screenshots and cached content older than this. |
 
 ## `risk`
@@ -191,6 +263,18 @@ Static behaviour analysis is described in [rules.md](rules.md).
 | `rules.<id>.weight` | from severity | Risk weight of a new match. |
 | `rules.<id>.ignoreResources` | `[]` | URL/identity globs the rule ignores. |
 
+## `libraries`
+
+Recognition of known JavaScript libraries and CVE lookup, described in [libraries.md](libraries.md).
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `detect` | `true` | Recognise libraries and versions (offline) and show them in reports and `diff`. Needs `analysis.enabled`. |
+| `vulnerabilities` | `true` | Raise `vulnerable-library` findings for known advisories. |
+| `minSeverity` | `low` | Only advisories at or above this severity (`low`, `medium`, `high`, `critical`) are reported. |
+| `maxDbAgeDays` | `30` | Warn when the cached vulnerability database (`thirdsentry vulndb update`) is older than this. |
+| `knownHashes` | `[]` | Exact SHA-256 matches: `[{ sha256, name, version }]` (up to 1000). |
+
 ## `domains`
 
 | Key | Default | Description |
@@ -201,13 +285,40 @@ Static behaviour analysis is described in [rules.md](rules.md).
 
 ## `suppressions`
 
-A list of documented suppressions. Each entry needs a `reason` and at least one of `id`, `kind`, `rule`, `resource`, `domain`; `site` and `expires` are optional. See [rules.md](rules.md#suppressing-false-positives).
+A list of documented suppressions. Each entry needs a `reason` and at least one of `id`, `kind`, `rule`, `resource`, `domain`, `policy`; `site` and `expires` are optional. See [rules.md](rules.md#suppressing-false-positives).
+
+## `scriptPolicies`
+
+Explicit per-script policies for vendors whose scripts rotate; allowed globally and in `sites[].scriptPolicies`. Each entry has `name`, `match` (`url`, `urlPrefix`, `glob`, `identity`, `host`, `domain`, optional `pages`), `mode` (`pin`, `path-versions`, `domain-only`), a required `reason`, and optional `expires` and `owner`; `pin` also needs `hashes`. Inline, blob and data matchers are rejected. Policies never auto-apply to other registrable domains. See [policies.md](policies.md).
+
+## `pci`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `requireJustification` | `false` | Report scripts on sensitive pages without a documented justification (or with an overdue review) as info/low `script-unjustified` findings (PCI DSS 6.4.3). The `inventory` report section appears whenever an inventory file exists or this is on. |
+| `reviewIntervalDays` | `365` | Default `reviewBy` offset used by `thirdsentry inventory add` when `--review-by` is omitted. |
+
+See [pci.md](pci.md).
 
 ## `reporting`
 
 | Key | Default | Description |
 | --- | --- | --- |
 | `formats` | `[json, sarif, html]` | Report formats written after each scan. |
+
+## `health`
+
+Scan health, the `scan-unhealthy` finding and the heartbeat. See [monitoring.md](monitoring.md).
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `failureThreshold` | `3` | Consecutive failed (or incomplete) scans of a site before a `scan-unhealthy` finding (severity `high`; `critical` at three times the threshold) is raised. 1-1000. |
+| `countIncomplete` | `true` | Count `partial` scans as failures. With `false` only scans with status `failed` count. |
+| `heartbeat.url` | `${THIRDSENTRY_HEARTBEAT_URL}` | Ping URL of a push monitor (healthchecks.io, Cronitor, Uptime Kuma). Setting `heartbeat` enables it; leave `heartbeat` out for none. Use an `${ENV}` reference: the URL is a secret. |
+| `heartbeat.failUrl` | none | URL for failure pings. Default: `url` plus `failPath`. |
+| `heartbeat.failPath` | `/fail` | Appended to the path of `url` for failure pings when `failUrl` is not set. `""` sends no failure ping. |
+| `heartbeat.onIncomplete` | `fail` | What a `partial` run sends: `fail`, `success` or `skip`. |
+| `heartbeat.timeoutMs` | `5000` | Timeout of the single attempt (500-30000). There are no retries. |
 
 ## `alerts`
 

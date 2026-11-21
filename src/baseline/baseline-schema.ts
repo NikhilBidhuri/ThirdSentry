@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PageSecuritySchema } from '../pci/page-security.js';
 import { RESOURCE_TYPES } from '../types/index.js';
 
 /**
@@ -10,7 +11,12 @@ import { RESOURCE_TYPES } from '../types/index.js';
  * edited by hand or by other people.
  */
 
-export const BASELINE_SCHEMA_VERSION = 1;
+/**
+ * Version 2 adds the optional `pageSecurity` map (approved security headers and form
+ * fingerprints per page). Version 1 files are upgraded in memory without changes: a
+ * missing `pageSecurity` entry means "nothing approved yet".
+ */
+export const BASELINE_SCHEMA_VERSION = 2;
 
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/, 'must be a lowercase hex SHA-256');
 
@@ -40,6 +46,8 @@ export const BaselineResourceSchema = z
     approvedHashes: z.array(ApprovedHashSchema).min(1).max(100),
     /** Behaviour indicators (rule id → count) of the approved version (Phase 3). */
     indicators: z.record(z.string().max(128), z.number().int().min(0)).optional(),
+    /** Known libraries (name, version) recognised in the approved version; used to explain version changes. */
+    libraries: z.array(z.object({ name: z.string().max(100), version: z.string().max(40) }).strict()).max(20).optional(),
   })
   .strict();
 
@@ -78,6 +86,8 @@ export const BaselineSchema = z
       .strict(),
     /** Pages covered by this baseline (page keys). */
     pages: z.array(z.string().max(16_384)),
+    /** Approved security headers and form fingerprint per page key (PCI DSS 11.6.1). Absent in version 1 baselines. */
+    pageSecurity: z.record(z.string().max(16_384), PageSecuritySchema).optional(),
   })
   .strict();
 

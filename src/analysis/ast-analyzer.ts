@@ -1,7 +1,7 @@
 import { default as traverse, type NodePath } from '@babel/traverse';
 import type { Node } from '@babel/types';
 import { normalizeLineEndings } from './normalizer.js';
-import { parseLenient } from './parser.js';
+import { parseForGoal, type ScriptGoal } from './parser.js';
 import { RULES } from './indicator-rules.js';
 import type { AnalysisState, NodeHandler, Rule, RuleMatch } from './rule-types.js';
 
@@ -21,6 +21,8 @@ export interface AnalyzerOptions {
   readonly maxBytes?: number;
   /** Maximum matches with snippets retained per rule (counts are always complete). */
   readonly maxMatchesPerRule?: number;
+  /** How the browser runs the code (see parser.ts). Defaults to unknown: classic script first. */
+  readonly goal?: ScriptGoal;
 }
 
 export interface AnalysisResult {
@@ -51,14 +53,26 @@ class LineIndex {
   }
 }
 
+/**
+ * Node types that behave like the key type and are dispatched to the same
+ * rule handlers, so that `eval?.(x)`, `` Function`x` `` and `document?.cookie`
+ * cannot evade rules written for plain calls and member accesses.
+ */
+const VISITOR_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  CallExpression: ['OptionalCallExpression', 'TaggedTemplateExpression'],
+  MemberExpression: ['OptionalMemberExpression'],
+};
+
 function buildVisitor(rules: readonly Rule[], state: AnalysisState): Record<string, (path: NodePath) => void> {
   const byType = new Map<string, NodeHandler[]>();
   for (const rule of rules) {
     for (const [type, handler] of Object.entries(rule.visitors ?? {})) {
       if (!handler) continue;
-      const list = byType.get(type) ?? [];
-      list.push(handler);
-      byType.set(type, list);
+      for (const t of [type, ...(VISITOR_ALIASES[type] ?? [])]) {
+        const list = byType.get(t) ?? [];
+        list.push(handler);
+        byType.set(t, list);
+      }
     }
   }
   const visitor: Record<string, (path: NodePath) => void> = {};
@@ -111,7 +125,7 @@ export function analyzeJavaScript(rawSource: string, options: AnalyzerOptions = 
 
   let ast;
   try {
-    ast = parseLenient(source, true);
+    ast = parseForGoal(source, options.goal ?? 'unknown', true);
   } catch (error) {
     return { analyzed: false, error: `parse error: ${(error as Error).message.split('\n')[0]?.slice(0, 200) ?? ''}`, counts: {}, matches: [], hosts: [] };
   }

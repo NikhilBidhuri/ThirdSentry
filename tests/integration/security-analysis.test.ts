@@ -43,7 +43,7 @@ afterAll(async () => {
 
 describe('security analysis end to end', () => {
   it('records behaviour indicators for scanned scripts', async () => {
-    expect(await cli('scan')).toBe(0);
+    expect(await cli('scan', '--allow-missing-baseline')).toBe(0);
     const scan = await readJson<ScanResult>('reports', 'latest-scan.json');
     const lib = scan.sites[0]?.resources.find((r) => r.finalUrl?.endsWith('/lib.js'));
     expect(lib?.indicators?.analyzed).toBe(true);
