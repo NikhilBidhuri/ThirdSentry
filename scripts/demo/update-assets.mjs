@@ -127,7 +127,9 @@ function curate({ first, baseline, attack }) {
   const base = lines(baseline.stdout).filter((l) => /^(acme-outfitters: create|\s+\d+ approved|Saved )/.test(plain(l)));
 
   const att = lines(attack.stdout);
-  const table = att.slice(att.findIndex((l) => plain(l).trim().startsWith('TYPE'))).slice(0, 6).map(squeeze);
+  const tableAt = att.findIndex((l) => plain(l).trim().startsWith('TYPE'));
+  const tableEnd = att.findIndex((l, i) => i > tableAt && plain(l).trim() === '');
+  const table = att.slice(tableAt, tableEnd).map(squeeze);
   const summaryAt = att.findIndex((l) => plain(l).startsWith('Summary:'));
   // Keep severity + title; the confidence and finding ID are in the report.
   const findings = att

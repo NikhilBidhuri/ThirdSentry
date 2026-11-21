@@ -35,6 +35,7 @@ Your checkout page runs code from analytics vendors, tag managers, payment SDKs,
 - **British Airways (2018):** a modified script on the payment page skimmed card data for two weeks.
 - **Ticketmaster (2018):** a compromised third-party chatbot script ran on payment pages.
 - **polyfill.io (2024):** a widely used CDN domain changed hands and started serving malicious code to more than 100,000 sites.
+- **Optimizely (2026):** A/B-testing snippets on 178 organisations' sites, including the BBC, CNN and Zoom, served a wallet swapper and card skimmer from the vendor's own CDN URL. [How ThirdSentry handles it →](#-case-study-the-optimizely-snippet-hijack-november-2026)
 
 ThirdSentry opens your pages in a **real browser**, records **every script that runs**, hashes it, analyses what it does, and compares the result with a **baseline you approved**. When something changes, it explains what changed, where, how risky the change looks and what to do next.
 
@@ -56,6 +57,7 @@ The demo runs a small local shop, "Acme Outfitters", on fake `.test` hostnames o
 git clone https://github.com/NikhilBidhuri/ThirdSentry.git && cd ThirdSentry
 npm ci && npx playwright install chromium
 npm run demo -- --open          # --open shows the HTML report in your browser when done
+npm run demo -- --scenario snippet-hijack   # the Optimizely-style attack (see below)
 ```
 
 <details>
@@ -74,6 +76,37 @@ npm run demo -- --open          # --open shows the HTML report in your browser w
 The analytics tag and first-party code don't change, so they aren't flagged. The scan exits with code `1`, which fails a CI job. See [demo/README.md](demo/README.md) for more.
 
 </details>
+
+## 🔍 Case study: the Optimizely snippet hijack (November 2026)
+
+On 16 November 2026, an attacker abused a vulnerability in Optimizely Web Experimentation to add JavaScript to customers' **project JavaScript**. The snippet kept its trusted URL on `cdn.optimizely.com`; only its content changed. For about 17 hours, [188 snippets across 178 organisations](https://blog.report-uri.com/worlds-largest-brands-infected-with-malware-via-optimizely/), including the BBC, CNN and Zoom, loaded a payload from an attacker domain that:
+- swapped crypto wallet addresses;
+- skimmed card fields;
+- sent cookies off the page;
+- targeted iPhones with exploit kits.
+
+Allow-lists based on URLs couldn't see this, because the script still came from the vendor everyone had allowed.
+
+`npm run demo -- --scenario snippet-hijack` reproduces the pattern harmlessly. The shop's A/B-testing snippet keeps its URL, but its project JavaScript now does two things:
+- builds a script URL from base64 and loads `track.js` from `c2.attacker.test`, with an `eval` fallback if the script is blocked;
+- through `track.js`, swaps wallet addresses on copy and in `fetch`/XHR requests, skims card fields and beacons the data out.
+
+This is what the next scheduled scan reports:
+
+| Signal | ThirdSentry finding | Severity |
+| --- | --- | :-: |
+| The payload: clipboard access, `fetch`/XHR overrides, payment-field access, data transmission | `resource-added` + `TS-CLIPBOARD`, `TS-NETWORK-API-HOOK`, `TS-SENSITIVE-FIELD-ACCESS`, `TS-EXFIL-COMBINATION` | 🔴 critical |
+| The vendor snippet: same URL, different content, new `eval` and script injection | `resource-modified` + `TS-EVAL`, `TS-SCRIPT-INJECTION` | 🔴 critical |
+| The page now sends data to `c2.attacker.test` | `new-outbound-domain` | 🟠 high |
+| Scripts load from a domain never approved for the site | `new-script-domain` | 🟡 medium |
+
+[`tests/integration/demo.test.ts`](tests/integration/demo.test.ts) checks these findings on every CI run.
+
+**What this means in practice:**
+- **It detects the hijack; it does not prevent it.** Visitors are exposed until the next scan. With the 6-hour schedule in the example workflow, a 17-hour incident would have been flagged within 6 hours. Scan checkout pages more often to shrink that window.
+- **The theft itself happens on form submit**, which ThirdSentry never does on payment forms. It flags the changed snippet, the injected script and its behaviour, and the new destination instead.
+- **A strict CSP is what blocks the payload.** In the demo, the checkout page's `script-src` stops `track.js` from loading (the scan shows it as `unavailable`), while the home page, which has no CSP, runs it. Report-uri saw the same thing, and also saw the `eval` fallback run where `'unsafe-eval'` was allowed. Use `thirdsentry csp-lint` to tighten your policy; ThirdSentry then flags it if the policy is later weakened or removed.
+- **Experimentation snippets change legitimately** whenever someone edits an experiment. Use a [`path-versions` script policy](docs/policies.md) to accept routine updates; new behaviour and new destinations are still reported at full severity.
 
 ## 📊 The report
 

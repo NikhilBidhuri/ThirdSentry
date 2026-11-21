@@ -1,13 +1,19 @@
 #!/usr/bin/env node
-// `npm run demo`: watch ThirdSentry catch a Magecart-style attack on a local shop.
+// `npm run demo`: watch ThirdSentry catch an attack on a local shop.
 //
 //   1. start the "Acme Outfitters" demo shop (fake .test hosts on 127.0.0.1)
 //   2. scan it and approve the clean state as the baseline
-//   3. compromise the shop (skimmer in a vendor script, lookalike-domain loader,
-//      exfiltration beacon, tampered payment form, CSP removed)
+//   3. compromise the shop with one of the scenarios below
 //   4. scan again and write JSON + HTML reports
 //
+// Scenarios (--scenario <name>):
+//   magecart        (default) skimmer in a vendor script, lookalike-domain loader,
+//                   exfiltration beacon, tampered payment form, CSP removed
+//   snippet-hijack  Optimizely-style: the A/B-testing snippet keeps its URL but now
+//                   loads a wallet-swapping card skimmer from an attacker domain
+//
 // Options:
+//   --scenario <n> magecart | snippet-hijack
 //   --open         open the HTML report in your browser when done
 //   --keep-server  keep the shop running afterwards so you can run CLI commands yourself
 //   --quiet        only print the step banners and the final summary
@@ -30,6 +36,33 @@ const argv = process.argv.slice(2);
 const args = new Set(argv);
 const portArg = argv.indexOf('--port');
 const listenPort = portArg >= 0 ? Number(argv[portArg + 1]) : 0;
+const scenarioArg = argv.indexOf('--scenario');
+const scenarioName = scenarioArg >= 0 ? argv[scenarioArg + 1] : 'magecart';
+
+/** Each scenario: the shop state it switches to, and what the attacker changed. */
+const SCENARIOS = {
+  magecart: {
+    state: 'compromised',
+    title: 'Attacker compromises the shop',
+    changes: [
+      'pay.js from the payment vendor now carries a card skimmer',
+      'a "jquery" loader from the lookalike domain cdn-assets-cloud.test runs obfuscated eval',
+      'card data is beaconed to collect.exfil.test',
+      'the checkout form posts to the attacker and asks for a card PIN',
+      'the checkout page no longer sends Content-Security-Policy or X-Frame-Options',
+    ],
+  },
+  'snippet-hijack': {
+    state: 'snippet-hijack',
+    title: 'Attacker hijacks the A/B-testing snippet (Optimizely-style)',
+    changes: [
+      'the snippet keeps its URL on cdn.experiments.test, but its "project JavaScript" changed',
+      'it builds a script URL from base64 and loads track.js from c2.attacker.test (eval fallback if blocked)',
+      'track.js swaps crypto wallet addresses on copy and in fetch/XHR requests',
+      'it skims card fields on submit and beacons page URL and cookies to c2.attacker.test',
+    ],
+  },
+};
 const quiet = args.has('--quiet');
 
 const tty = process.stdout.isTTY && !process.env.NO_COLOR;
@@ -79,6 +112,8 @@ function openInBrowser(file) {
 }
 
 async function main() {
+  const scenario = SCENARIOS[scenarioName];
+  if (!scenario) throw new Error(`unknown --scenario "${scenarioName}" (use ${Object.keys(SCENARIOS).join(' or ')})`);
   if (!existsSync(BIN)) {
     process.stdout.write(gray('dist/ not found, building ThirdSentry first (npm run build)...\n'));
     const build = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], { cwd: ROOT, stdio: 'inherit', shell: process.platform === 'win32' });
@@ -105,17 +140,9 @@ async function main() {
     const approved = await thirdsentry('baseline', '--yes', '--reason', 'demo: reviewed the clean shop');
     if (approved !== 0) throw new Error('baseline failed');
 
-    banner('3/4', 'Attacker compromises the shop');
-    shop.setState('compromised');
-    for (const line of [
-      'pay.js from the payment vendor now carries a card skimmer',
-      'a "jquery" loader from the lookalike domain cdn-assets-cloud.test runs obfuscated eval',
-      'card data is beaconed to collect.exfil.test',
-      'the checkout form posts to the attacker and asks for a card PIN',
-      'the checkout page no longer sends Content-Security-Policy or X-Frame-Options',
-    ]) {
-      process.stdout.write(`  ${red('✗')} ${line}\n`);
-    }
+    banner('3/4', scenario.title);
+    shop.setState(scenario.state);
+    for (const line of scenario.changes) process.stdout.write(`  ${red('✗')} ${line}\n`);
 
     banner('4/4', 'Scan again');
     const reportDir = join(WORK, 'report');
